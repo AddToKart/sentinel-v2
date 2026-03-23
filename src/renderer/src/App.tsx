@@ -501,17 +501,18 @@ export default function App(): JSX.Element {
           <Panel
             panelRef={sidebarPanelRef}
             defaultSize={18}
-            minSize={0}
+            minSize={14}
             collapsible
-            collapsedSize={0}
-            className="transition-[width] duration-200"
+            collapsedSize={6}
+            className="transition-all duration-300 ease-in-out"
             style={{ overflow: 'hidden' }}
           >
             <Sidebar
-              collapsed={false}
+              collapsed={sidebarCollapsed}
               diffBadges={diffBadges}
               overlayFiles={overlayFiles}
               defaultSessionStrategy={defaultSessionStrategy}
+              selectedFileProjectPath={selectedFile?.projectPath}
               onOpenProject={handleOpenProject}
               onRefreshProject={handleRefreshProject}
               onChangeDefaultSessionStrategy={(strategy) => { void handleChangeDefaultSessionStrategy(strategy) }}

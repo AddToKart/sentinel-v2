@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -11,7 +12,9 @@ import {
   FolderRoot,
   GitBranch,
   GitFork,
-  RefreshCw
+  RefreshCw,
+  Search,
+  Sparkles
 } from 'lucide-react'
 
 import type { ProjectState, SessionWorkspaceStrategy } from '@shared/types'
@@ -30,6 +33,7 @@ interface SidebarProps {
   diffBadges: Record<string, string[]>
   overlayFiles: WorkspaceOverlayFile[]
   defaultSessionStrategy: SessionWorkspaceStrategy
+  selectedFileProjectPath?: string
   onOpenProject: () => void
   onRefreshProject: () => void
   onChangeDefaultSessionStrategy: (strategy: SessionWorkspaceStrategy) => void
@@ -60,11 +64,11 @@ function renderDiffBadges(badges: string[]): JSX.Element | null {
 
   return (
     <div className="ml-auto flex shrink-0 items-center gap-1">
-      <span className="border border-sentinel-accent/40 bg-sentinel-accent/12 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-white">
+      <span className="border border-sentinel-accent/35 bg-sentinel-accent/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.22em] text-white">
         {badges[0]}
       </span>
       {badges.length > 1 && (
-        <span className="border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.2em] text-sentinel-mist">
+        <span className="border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] uppercase tracking-[0.22em] text-sentinel-mist">
           +{badges.length - 1}
         </span>
       )}
@@ -72,36 +76,163 @@ function renderDiffBadges(badges: string[]): JSX.Element | null {
   )
 }
 
+function countFiles(nodes: SidebarTreeNode[]): number {
+  let total = 0
+
+  for (const node of nodes) {
+    if (node.kind === 'file') {
+      total += 1
+      continue
+    }
+
+    total += countFiles(node.children ?? [])
+  }
+
+  return total
+}
+
+function matchesTreeQuery(node: SidebarTreeNode, query: string): boolean {
+  const normalizedName = node.name.toLowerCase()
+  const normalizedPath = node.path.toLowerCase()
+
+  return normalizedName.includes(query) || normalizedPath.includes(query)
+}
+
+function filterTreeNode(
+  node: SidebarTreeNode,
+  query: string,
+  changedOnly: boolean,
+  diffBadges: Record<string, string[]>
+): SidebarTreeNode | null {
+  const normalizedQuery = query.trim().toLowerCase()
+
+  if (node.kind === 'file') {
+    const isChanged = (diffBadges[node.path] ?? []).length > 0
+    if (changedOnly && !isChanged) {
+      return null
+    }
+    if (normalizedQuery && !matchesTreeQuery(node, normalizedQuery)) {
+      return null
+    }
+    return node
+  }
+
+  const matchesSelf = normalizedQuery !== '' && matchesTreeQuery(node, normalizedQuery)
+  const nextQuery = matchesSelf ? '' : normalizedQuery
+  const nextChildren = (node.children ?? [])
+    .map((child) => filterTreeNode(child, nextQuery, changedOnly, diffBadges))
+    .filter((child): child is SidebarTreeNode => child !== null)
+
+  if (nextChildren.length > 0) {
+    return {
+      ...node,
+      children: nextChildren
+    }
+  }
+
+  if (matchesSelf) {
+    return {
+      ...node,
+      children: []
+    }
+  }
+
+  return null
+}
+
+function filterSidebarTree(
+  nodes: SidebarTreeNode[],
+  query: string,
+  changedOnly: boolean,
+  diffBadges: Record<string, string[]>
+): SidebarTreeNode[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery && !changedOnly) {
+    return nodes
+  }
+
+  return nodes
+    .map((node) => filterTreeNode(node, normalizedQuery, changedOnly, diffBadges))
+    .filter((node): node is SidebarTreeNode => node !== null)
+}
+
+function toggleButtonClasses(active: boolean): string {
+  return active
+    ? 'border-sentinel-accent/35 bg-sentinel-accent/12 text-white'
+    : 'border-white/10 bg-white/[0.03] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.05] hover:text-white'
+}
+
+function SidebarSection({
+  title,
+  meta,
+  expanded,
+  onToggle,
+  children
+}: {
+  title: string
+  meta?: string
+  expanded: boolean
+  onToggle: () => void
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <section className="shrink-0 border-b border-white/10">
+      <button
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.24em] text-sentinel-mist transition hover:bg-white/[0.04] hover:text-white"
+        onClick={onToggle}
+        type="button"
+      >
+        <span>{title}</span>
+        <span className="flex items-center gap-2">
+          {meta && <span className="text-[10px] tracking-[0.2em] text-sentinel-mist/70">{meta}</span>}
+          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+
+      <div className={`overflow-hidden transition-all duration-300 ease-out ${expanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
+        <div className="px-3 pb-3">{children}</div>
+      </div>
+    </section>
+  )
+}
+
 function TreeNode({
   depth,
   expandedPaths,
   diffBadges,
+  forceExpanded,
   node,
-  toggle,
+  onFileContextMenu,
   onFileSelect,
-  onFileContextMenu
+  selectedPath,
+  toggle
 }: {
   node: SidebarTreeNode
   depth: number
   expandedPaths: Set<string>
   diffBadges: Record<string, string[]>
+  forceExpanded: boolean
   toggle: (path: string) => void
   onFileSelect: (file: SelectedFileEntry) => void
   onFileContextMenu: (event: MouseEvent<HTMLButtonElement>, node: SidebarTreeNode) => void
+  selectedPath?: string
 }): JSX.Element {
   const isDirectory = node.kind === 'directory'
-  const expanded = expandedPaths.has(node.path)
+  const expanded = forceExpanded || expandedPaths.has(node.path)
   const hasChildren = Boolean(node.children && node.children.length > 0)
   const badges = node.kind === 'file' ? diffBadges[node.path] ?? [] : []
   const isModified = badges.length > 0
+  const isSelected = node.kind === 'file' && selectedPath === node.path
 
   return (
     <div className="space-y-1">
       <button
-        className={`group flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm transition-all duration-200 ${
-          isModified
-            ? 'bg-sentinel-accent/10 text-white'
-            : 'text-sentinel-mist hover:bg-white/[0.08] hover:text-white hover:translate-x-1'
+        className={`group flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-[13px] transition-all duration-150 ${
+          isSelected
+            ? 'border-sentinel-accent bg-white/[0.08] text-white'
+            : isModified
+              ? 'border-sentinel-ice/70 bg-white/[0.04] text-white'
+              : 'border-transparent text-sentinel-mist hover:border-white/10 hover:bg-white/[0.04] hover:text-white'
         }`}
         onClick={() => {
           if (isDirectory) {
@@ -118,14 +249,14 @@ function TreeNode({
             onFileContextMenu(event, node)
           }
         }}
-        style={{ paddingLeft: 10 + depth * 14 }}
+        style={{ paddingLeft: 8 + depth * 14 }}
         title={node.path}
         type="button"
       >
         {isDirectory ? (
           <>
             {hasChildren ? (
-              <ChevronRight className={`h-4 w-4 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+              <ChevronRight className={`h-4 w-4 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90 text-white' : ''}`} />
             ) : (
               <span className="inline-block h-4 w-4 shrink-0" />
             )}
@@ -147,19 +278,23 @@ function TreeNode({
       </button>
 
       {isDirectory && (
-        <div className={`space-y-1 overflow-hidden transition-all duration-300 ease-in-out ${expanded && hasChildren ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-          {node.children?.map((child) => (
-            <TreeNode
-              key={child.path}
-              depth={depth + 1}
-              diffBadges={diffBadges}
-              expandedPaths={expandedPaths}
-              node={child}
-              onFileSelect={onFileSelect}
-              onFileContextMenu={onFileContextMenu}
-              toggle={toggle}
-            />
-          ))}
+        <div className={`ml-2 overflow-hidden border-l border-white/[0.05] pl-1 transition-all duration-300 ease-in-out ${expanded && hasChildren ? 'max-h-[2200px] opacity-100' : 'max-h-0 opacity-0'}`}>
+          <div className="space-y-1 py-0.5">
+            {node.children?.map((child) => (
+              <TreeNode
+                key={child.path}
+                depth={depth + 1}
+                diffBadges={diffBadges}
+                expandedPaths={expandedPaths}
+                forceExpanded={forceExpanded}
+                node={child}
+                onFileContextMenu={onFileContextMenu}
+                onFileSelect={onFileSelect}
+                selectedPath={selectedPath}
+                toggle={toggle}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -173,6 +308,7 @@ export function Sidebar({
   diffBadges,
   overlayFiles,
   defaultSessionStrategy,
+  selectedFileProjectPath,
   onOpenProject,
   onRefreshProject,
   onChangeDefaultSessionStrategy,
@@ -183,12 +319,28 @@ export function Sidebar({
 }: SidebarProps): JSX.Element {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showChangedOnly, setShowChangedOnly] = useState(false)
+  const [projectSectionOpen, setProjectSectionOpen] = useState(true)
+  const [modesSectionOpen, setModesSectionOpen] = useState(false)
+  const [filesSectionOpen, setFilesSectionOpen] = useState(true)
+
   const displayTree = buildSidebarTree(project.path, project.tree, overlayFiles)
   const autoExpandedPaths = collectAutoExpandedPaths(project.path, project.tree, overlayFiles)
   const overlaySignature = overlayFiles.map((file) => file.projectPath).sort().join('|')
+  const filteredTree = filterSidebarTree(displayTree, searchQuery, showChangedOnly, diffBadges)
+  const totalFileCount = countFiles(displayTree)
+  const visibleFileCount = countFiles(filteredTree)
+  const modifiedFileCount = Object.values(diffBadges).filter((badges) => badges.length > 0).length
+  const forceExpanded = searchQuery.trim().length > 0 || showChangedOnly
 
   useEffect(() => {
     setExpandedPaths(autoExpandedPaths)
+    setSearchQuery('')
+    setShowChangedOnly(false)
+    setProjectSectionOpen(true)
+    setModesSectionOpen(false)
+    setFilesSectionOpen(true)
   }, [project.path])
 
   useEffect(() => {
@@ -224,6 +376,10 @@ export function Sidebar({
   }, [])
 
   function toggle(pathValue: string): void {
+    if (forceExpanded) {
+      return
+    }
+
     setExpandedPaths((current) => {
       const next = new Set(current)
 
@@ -260,193 +416,267 @@ export function Sidebar({
 
   if (collapsed) {
     return (
-      <aside className="flex h-full min-h-0 w-[64px] flex-col items-center overflow-hidden border-r border-white/10 bg-sentinel-ink/90 px-3 pb-4 pt-10 backdrop-blur-xl animate-in slide-in-from-left-4 duration-300 ease-out">
-        <div className="flex flex-col items-center gap-3">
+      <aside className="flex h-full min-h-0 w-full flex-col overflow-hidden border-r border-white/10 bg-[#081018]/96 animate-in fade-in slide-in-from-left-2 duration-200 ease-out">
+        <div className="flex h-full flex-col items-center gap-2 px-2 py-3">
           <button
-            className="group inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition-all duration-200 hover:border-sentinel-accent/60 hover:bg-sentinel-accent/20 hover:scale-105 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+            className="inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
             onClick={onToggleCollapse}
             title="Expand sidebar"
             type="button"
           >
-            <ChevronRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+            <ChevronRight className="h-4 w-4" />
           </button>
 
-          <div className="inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white text-sm font-semibold uppercase tracking-[0.28em] text-sentinel-ink transition-all duration-300 hover:scale-105">
+          <div className="mt-2 flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-sm font-semibold uppercase tracking-[0.24em] text-white">
             {project.name?.slice(0, 1) || 'S'}
           </div>
 
           <button
-            className="group inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition-all duration-200 hover:border-sentinel-accent/60 hover:bg-sentinel-accent/20 hover:scale-105 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+            className="inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
             onClick={onOpenProject}
             title="Open project"
             type="button"
           >
-            <FolderOpen className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
+            <FolderRoot className="h-4 w-4" />
           </button>
 
           <button
-            className="group inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition-all duration-200 hover:border-sentinel-accent/60 hover:bg-sentinel-accent/20 hover:scale-105 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+            className="inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
             onClick={onRefreshProject}
             title="Refresh tree"
             type="button"
           >
-            <RefreshCw className={`h-4 w-4 transition-transform duration-200 group-hover:scale-110 ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
+
+          <button
+            className={`inline-flex h-10 w-10 items-center justify-center border transition ${
+              globalMode === 'ide'
+                ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
+                : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
+            }`}
+            onClick={() => onToggleGlobalMode(globalMode === 'multiplex' ? 'ide' : 'multiplex')}
+            title={globalMode === 'multiplex' ? 'Switch to IDE mode' : 'Switch to agent view'}
+            type="button"
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+
+          <div className="mt-auto border border-white/10 bg-white/[0.04] px-2 py-1 text-[9px] uppercase tracking-[0.22em] text-sentinel-mist">
+            {modifiedFileCount}
+          </div>
         </div>
       </aside>
     )
   }
 
   return (
-    <aside className="relative flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 bg-sentinel-ink/80 px-4 pb-4 pt-10 backdrop-blur-xl animate-in slide-in-from-left-2 duration-300 ease-out">
-      <div className="shrink-0 space-y-6">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 bg-[#081018]/96 animate-in fade-in slide-in-from-left-2 duration-200 ease-out">
+      <div className="shrink-0 border-b border-white/10 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="animate-in fade-in slide-in-from-left-3 duration-500 ease-out">
-            <div className="text-xs font-medium uppercase tracking-[0.28em] text-sentinel-mist">Workspace</div>
-            <div className="mt-2 text-2xl font-semibold tracking-tight text-white">Sentinel</div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-sentinel-mist">Explorer</div>
+            <div className="mt-2 truncate text-sm font-semibold text-white">
+              {project.name || 'No project selected'}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-sentinel-mist">
+              <span className="border border-white/10 bg-white/[0.04] px-2 py-1">
+                {project.path ? 'workspace' : 'idle'}
+              </span>
+              <span className="border border-white/10 bg-white/[0.04] px-2 py-1">
+                {modifiedFileCount} changed
+              </span>
+              {project.branch && (
+                <span className="inline-flex items-center gap-1 border border-sentinel-ice/25 bg-sentinel-ice/10 px-2 py-1 text-sentinel-ice">
+                  <GitBranch className="h-3 w-3" />
+                  {project.branch}
+                </span>
+              )}
+            </div>
           </div>
 
           <button
-            className="group inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition-all duration-200 hover:border-sentinel-accent/60 hover:bg-sentinel-accent/20 hover:scale-105 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
             onClick={onToggleCollapse}
             title="Collapse sidebar"
             type="button"
           >
-            <ChevronLeft className="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+            <ChevronLeft className="h-4 w-4" />
           </button>
         </div>
+      </div>
 
-        <div className="panel-muted space-y-4 p-4 animate-in fade-in slide-in-from-left-4 duration-500 ease-out delay-75">
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-sentinel-mist">
-                <FolderRoot className="h-3.5 w-3.5" />
-                Project
-              </div>
-              <div className="text-lg font-medium text-white">{project.name || 'No repository selected'}</div>
-            </div>
-
-            <button
-              className="inline-flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.05] text-sentinel-mist transition hover:border-sentinel-accent/40 hover:bg-sentinel-accent/10 hover:text-white"
-              onClick={onRefreshProject}
-              title="Refresh tree"
-              type="button"
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-
-          {project.path && (
-            <div className="space-y-2">
-              {project.branch && (
-                <div className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-sentinel-mist">
-                  <GitBranch className="h-3.5 w-3.5" />
-                  {project.branch}
-                </div>
-              )}
-
-              <div className="border border-white/10 bg-black/20 px-3 py-3 text-xs leading-5 text-sentinel-mist">
-                {project.path}
-              </div>
-            </div>
-          )}
-
+      <div className="shrink-0 border-b border-white/10 px-3 py-2">
+        <div className="grid grid-cols-2 gap-2">
           <button
-            className="inline-flex w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-white transition hover:border-sentinel-accent/40 hover:bg-sentinel-accent/10"
+            className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
             onClick={onOpenProject}
             type="button"
           >
-            <FolderOpen className="h-4 w-4" />
-            {project.path ? 'Open Another Project' : 'Open Project'}
+            <FolderOpen className="h-3.5 w-3.5" />
+            Open
           </button>
 
-          <div className="space-y-3 border border-white/10 bg-black/20 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist">
-                Session Workspace
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-sentinel-mist">
-                default
-              </div>
-            </div>
+          <button
+            className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+            onClick={onRefreshProject}
+            type="button"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
 
-            <div className="grid gap-2">
+      <SidebarSection
+        expanded={projectSectionOpen}
+        meta={project.path ? 'project' : 'idle'}
+        onToggle={() => setProjectSectionOpen((current) => !current)}
+        title="Project"
+      >
+        <div className="space-y-3 border-l border-white/10 pl-3">
+          <div className="text-sm font-medium text-white">{project.name || 'No project selected'}</div>
+          {project.path ? (
+            <div className="font-mono text-[11px] leading-5 text-sentinel-mist break-all">
+              {project.path}
+            </div>
+          ) : (
+            <div className="text-xs leading-6 text-sentinel-mist">
+              Open a folder to browse files and run agent sessions.
+            </div>
+          )}
+        </div>
+      </SidebarSection>
+
+      <SidebarSection
+        expanded={modesSectionOpen}
+        meta={globalMode === 'ide' ? 'ide' : 'agents'}
+        onToggle={() => setModesSectionOpen((current) => !current)}
+        title="Modes"
+      >
+        <div className="space-y-4">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist">Session Workspace</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
               <button
-                className={`flex items-start gap-3 border px-3 py-3 text-left transition ${
-                  defaultSessionStrategy === 'sandbox-copy'
-                    ? 'border-sentinel-accent/40 bg-sentinel-accent/12 text-white'
-                    : 'border-white/10 bg-white/[0.03] text-sentinel-mist hover:border-sentinel-accent/25 hover:text-white'
-                }`}
+                className={`flex items-center gap-2 border px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.2em] transition ${toggleButtonClasses(defaultSessionStrategy === 'sandbox-copy')}`}
                 onClick={() => onChangeDefaultSessionStrategy('sandbox-copy')}
                 type="button"
               >
-                <Copy className="mt-0.5 h-4 w-4 shrink-0 text-sentinel-accent" />
-                <div className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em]">Sandbox Copy</div>
-                  <div className="text-[11px] leading-5 opacity-80">
-                    Local-only temporary copy. Review and sync files back into the main project without Git branches.
-                  </div>
-                </div>
+                <Copy className="h-3.5 w-3.5 shrink-0 text-sentinel-accent" />
+                Sandbox
               </button>
 
               <button
-                className={`flex items-start gap-3 border px-3 py-3 text-left transition ${
-                  defaultSessionStrategy === 'git-worktree'
-                    ? 'border-sentinel-accent/40 bg-sentinel-accent/12 text-white'
-                    : 'border-white/10 bg-white/[0.03] text-sentinel-mist hover:border-sentinel-accent/25 hover:text-white'
-                } ${project.isGitRepo ? '' : 'cursor-not-allowed opacity-50'}`}
+                className={`flex items-center gap-2 border px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.2em] transition ${toggleButtonClasses(defaultSessionStrategy === 'git-worktree')} ${project.isGitRepo ? '' : 'cursor-not-allowed opacity-50'}`}
                 disabled={!project.isGitRepo}
                 onClick={() => onChangeDefaultSessionStrategy('git-worktree')}
                 type="button"
               >
-                <GitFork className="mt-0.5 h-4 w-4 shrink-0 text-sentinel-ice" />
-                <div className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em]">Git Worktree</div>
-                  <div className="text-[11px] leading-5 opacity-80">
-                    Advanced branch-based isolation with commit and merge controls.
-                  </div>
-                </div>
+                <GitFork className="h-3.5 w-3.5 shrink-0 text-sentinel-ice" />
+                Worktree
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist">View</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                className={`border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition ${toggleButtonClasses(globalMode === 'multiplex')}`}
+                onClick={() => onToggleGlobalMode('multiplex')}
+                type="button"
+              >
+                Agents
+              </button>
+
+              <button
+                className={`border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition ${
+                  globalMode === 'ide'
+                    ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
+                    : 'border-white/10 bg-white/[0.03] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.05] hover:text-white'
+                }`}
+                onClick={() => onToggleGlobalMode('ide')}
+                type="button"
+              >
+                IDE
               </button>
             </div>
           </div>
         </div>
+      </SidebarSection>
 
-        <div className="flex items-center justify-between animate-in fade-in slide-in-from-left-4 duration-500 ease-out delay-100">
-          <div className="text-xs font-medium uppercase tracking-[0.24em] text-sentinel-mist">Project Tree</div>
-          {displayTree.length > 0 && (
-            <div className="border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] uppercase tracking-[0.2em] text-sentinel-mist">
-              live diff badges
+      <section className={`border-b border-white/10 ${filesSectionOpen ? 'min-h-0 flex flex-1 flex-col' : 'shrink-0'}`}>
+        <button
+          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.24em] text-sentinel-mist transition hover:bg-white/[0.04] hover:text-white"
+          onClick={() => setFilesSectionOpen((current) => !current)}
+          type="button"
+        >
+          <span>Files</span>
+          <span className="flex items-center gap-2">
+            <span className="text-[10px] tracking-[0.2em] text-sentinel-mist/70">{visibleFileCount}/{totalFileCount}</span>
+            {filesSectionOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </span>
+        </button>
+
+        <div className={`overflow-hidden transition-all duration-300 ease-out ${filesSectionOpen ? 'min-h-0 flex-1 opacity-100' : 'max-h-0 opacity-0'}`}>
+          <div className="flex h-full min-h-0 flex-col px-3 pb-3">
+            <div className="flex items-center gap-2 border-b border-white/10 pb-3">
+              <label className="flex min-w-0 flex-1 items-center gap-2 border border-white/10 bg-black/20 px-3 py-2 text-sentinel-mist transition focus-within:border-sentinel-accent/35 focus-within:text-white">
+                <Search className="h-4 w-4 shrink-0" />
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-sentinel-mist/60"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search files"
+                  type="search"
+                  value={searchQuery}
+                />
+              </label>
+
+              <button
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 border px-3 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${showChangedOnly ? 'border-sentinel-accent/35 bg-sentinel-accent/12 text-white' : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'}`}
+                onClick={() => setShowChangedOnly((current) => !current)}
+                title="Show changed files only"
+                type="button"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Changed
+              </button>
             </div>
-          )}
-        </div>
-      </div>
 
-      <div className="mt-5 min-h-0 flex-1 overflow-auto pr-1 animate-in fade-in slide-in-from-left-2 duration-500 ease-out delay-150">
-        {displayTree.length === 0 ? (
-          <div className="border border-dashed border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-sentinel-mist">
-            Select a project folder to browse files and start sandbox or worktree-backed agent sessions.
+            <div className="mt-3 min-h-0 flex-1 overflow-auto pr-1">
+              {filteredTree.length === 0 ? (
+                <div className="border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm leading-6 text-sentinel-mist">
+                  {project.path
+                    ? 'No files match the current search or filter.'
+                    : 'Open a project to browse files here.'}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredTree.map((node) => (
+                    <TreeNode
+                      key={node.path}
+                      depth={0}
+                      diffBadges={diffBadges}
+                      expandedPaths={expandedPaths}
+                      forceExpanded={forceExpanded}
+                      node={node}
+                      onFileContextMenu={handleFileContextMenu}
+                      onFileSelect={onFileSelect}
+                      selectedPath={selectedFileProjectPath}
+                      toggle={toggle}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        ) : (
-          <div className="space-y-1">
-            {displayTree.map((node) => (
-              <TreeNode
-                key={node.path}
-                depth={0}
-                diffBadges={diffBadges}
-                expandedPaths={expandedPaths}
-                node={node}
-                onFileSelect={onFileSelect}
-                onFileContextMenu={handleFileContextMenu}
-                toggle={toggle}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        </div>
+      </section>
 
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[220px] border border-white/10 bg-[#0b1219] p-1 shadow-terminal"
+          className="fixed z-50 min-w-[220px] border border-white/10 bg-[#0b1219] p-1.5 shadow-terminal backdrop-blur-2xl"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
@@ -469,25 +699,6 @@ export function Sidebar({
             <span>Open in System Editor</span>
             <span className="font-mono text-[11px] text-sentinel-mist">system</span>
           </button>
-        </div>
-      )}
-
-      {!collapsed && (
-        <div className="shrink-0 p-4 border-t border-white/10 flex items-center bg-black/20 animate-in fade-in slide-in-from-bottom-2 duration-500 ease-out delay-200">
-          <div className="flex w-full bg-white/[0.04] p-1 border border-white/10">
-            <button
-              className={`flex-1 text-[10px] font-bold uppercase tracking-widest py-1.5 transition-all duration-200 hover:scale-[1.02] ${globalMode === 'multiplex' ? 'bg-sentinel-accent/20 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' : 'text-sentinel-mist hover:text-white hover:bg-white/[0.04]'}`}
-              onClick={() => onToggleGlobalMode('multiplex')}
-            >
-              Multiplex
-            </button>
-            <button
-              className={`flex-1 text-[10px] font-bold uppercase tracking-widest py-1.5 transition-all duration-200 hover:scale-[1.02] ${globalMode === 'ide' ? 'bg-emerald-500/20 text-white shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'text-sentinel-mist hover:text-white hover:bg-white/[0.04]'}`}
-              onClick={() => onToggleGlobalMode('ide')}
-            >
-              IDE Mode
-            </button>
-          </div>
         </div>
       )}
     </aside>
