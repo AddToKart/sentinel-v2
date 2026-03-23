@@ -119,11 +119,22 @@ export default function App(): JSX.Element {
           return [entry, ...cur].slice(0, 100)
         })
       }),
+      sentinelBridge.onProjectState(setProject),
       sentinelBridge.onWorkspaceState(setWorkspaceSummary),
       sentinelBridge.onSessionState((session) => {
         setSessions((cur) => {
           const i = cur.findIndex((s) => s.id === session.id)
-          if (i >= 0) { const n = [...cur]; n[i] = session; return n }
+          if (i >= 0) {
+            if (session.status === 'closed') {
+              return cur.filter((existing) => existing.id !== session.id)
+            }
+            const n = [...cur]
+            n[i] = session
+            return n
+          }
+          if (session.status === 'closed') {
+            return cur
+          }
           return [...cur, session]
         })
       }),

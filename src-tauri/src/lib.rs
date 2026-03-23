@@ -1,11 +1,12 @@
 mod models;
+#[path = "sentinelApi/mod.rs"]
 mod sentinel;
 
 use std::sync::Arc;
 
 use models::{
     BootstrapPayload, CreateSessionInput, IdeTerminalState, ProjectState, SessionApplyResult,
-    SessionSummary, SessionWorkspaceStrategy, WorkspacePreferences,
+    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, WorkspacePreferences,
 };
 use sentinel::SentinelManager;
 use tauri::{AppHandle, RunEvent, State};
@@ -42,21 +43,28 @@ fn set_default_session_strategy(
 }
 
 #[tauri::command]
-fn create_session(
+async fn create_session(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     input: Option<CreateSessionInput>,
 ) -> Result<SessionSummary, String> {
-    state.create_session(&app, input.unwrap_or_default())
+    let manager = state.inner().clone();
+    let input = input.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || manager.create_session(&app, input))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn close_session(
+async fn close_session(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
 ) -> Result<(), String> {
-    state.close_session(&app, &session_id)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.close_session(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -170,7 +178,7 @@ fn commit_session(
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
     message: String,
-) -> Result<(), String> {
+) -> Result<SessionCommitResult, String> {
     state.commit_session(&app, &session_id, &message)
 }
 

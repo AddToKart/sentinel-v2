@@ -175,7 +175,23 @@ pub struct SessionApplyResult {
     pub session_id: String,
     pub workspace_strategy: SessionWorkspaceStrategy,
     pub applied_paths: Vec<String>,
+    pub remaining_paths: Vec<String>,
     pub conflicts: Vec<SessionSyncConflict>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCommitResult {
+    pub session_id: String,
+    pub workspace_strategy: SessionWorkspaceStrategy,
+    pub applied_paths: Vec<String>,
+    pub committed_paths: Vec<String>,
+    pub remaining_paths: Vec<String>,
+    pub conflicts: Vec<SessionSyncConflict>,
+    pub created_commit: bool,
+    pub commit_message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -384,7 +384,7 @@ export function Sidebar({
                 <div className="space-y-1">
                   <div className="text-xs font-semibold uppercase tracking-[0.2em]">Sandbox Copy</div>
                   <div className="text-[11px] leading-5 opacity-80">
-                    Run agents in a temporary copy, then apply reviewed files back into the main project.
+                    Local-only temporary copy. Review and sync files back into the main project without Git branches.
                   </div>
                 </div>
               </button>

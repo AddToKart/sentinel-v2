@@ -104,7 +104,20 @@ export interface SessionApplyResult {
   sessionId: string
   workspaceStrategy: SessionWorkspaceStrategy
   appliedPaths: string[]
+  remainingPaths: string[]
   conflicts: SessionSyncConflict[]
+}
+
+export interface SessionCommitResult {
+  sessionId: string
+  workspaceStrategy: SessionWorkspaceStrategy
+  appliedPaths: string[]
+  committedPaths: string[]
+  remainingPaths: string[]
+  conflicts: SessionSyncConflict[]
+  createdCommit: boolean
+  commitMessage: string
+  commitHash?: string
 }
 
 export interface WorkspacePreferences {
@@ -172,12 +185,13 @@ export interface SentinelApi {
   readFileDiff: (sessionId: string, filePath: string) => Promise<string>
   writeSessionFile: (sessionId: string, relativePath: string, content: string) => Promise<void>
   applySession: (sessionId: string) => Promise<SessionApplyResult>
-  commitSession: (sessionId: string, message: string) => Promise<void>
+  commitSession: (sessionId: string, message: string) => Promise<SessionCommitResult>
   discardSessionChanges: (sessionId: string) => Promise<void>
   revealInFileExplorer: (filePath: string) => Promise<void>
   openInSystemEditor: (filePath: string) => Promise<void>
   onSessionOutput: (listener: (event: SessionOutputEvent) => void) => () => void
   onIdeTerminalOutput: (listener: (event: IdeTerminalOutputEvent) => void) => () => void
+  onProjectState: (listener: (project: ProjectState) => void) => () => void
   onSessionState: (listener: (session: SessionSummary) => void) => () => void
   onIdeTerminalState: (listener: (state: IdeTerminalState) => void) => () => void
   onSessionMetrics: (listener: (payload: SessionMetricsUpdate) => void) => () => void

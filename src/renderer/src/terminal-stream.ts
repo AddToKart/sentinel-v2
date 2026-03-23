@@ -151,3 +151,6 @@ export function subscribeToIdeTerminalOutput(
 export function clearIdeTerminalOutput(): void {
   store.clear(IDE_TERMINAL_KEY)
 }
+
+ensureSessionBridge()
+ensureIdeBridge()

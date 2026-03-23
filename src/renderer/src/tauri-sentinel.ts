@@ -10,6 +10,8 @@ import type {
   IdeTerminalOutputEvent,
   IdeTerminalState,
   ProjectState,
+  SessionApplyResult,
+  SessionCommitResult,
   SessionDiffUpdate,
   SessionHistoryUpdate,
   SessionMetricsUpdate,
@@ -166,10 +168,10 @@ const api: SentinelApi = {
     })
   },
   applySession(sessionId: string) {
-    return invokeCommand('apply_session', { sessionId })
+    return invokeCommand<SessionApplyResult>('apply_session', { sessionId })
   },
   commitSession(sessionId: string, message: string) {
-    return invokeCommand<void>('commit_session', { sessionId, message })
+    return invokeCommand<SessionCommitResult>('commit_session', { sessionId, message })
   },
   discardSessionChanges(sessionId: string) {
     return invokeCommand<void>('discard_session_changes', { sessionId })
@@ -182,6 +184,11 @@ const api: SentinelApi = {
   },
   onSessionOutput(listener: (event: SessionOutputEvent) => void) {
     return subscribe<SessionOutputEvent>('sentinel:session-output', listener)
+  },
+  onProjectState(listener: (project: ProjectState) => void) {
+    return subscribe<ProjectState>('sentinel:project-state', (project) => {
+      listener(rememberProject(project))
+    })
   },
   onIdeTerminalOutput(listener: (event: IdeTerminalOutputEvent) => void) {
     return subscribe<IdeTerminalOutputEvent>('sentinel:ide-terminal-output', listener)

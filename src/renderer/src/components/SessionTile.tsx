@@ -21,7 +21,12 @@ import {
   X
 } from 'lucide-react'
 
-import type { SessionApplyResult, SessionCommandEntry, SessionSummary } from '@shared/types'
+import type {
+  SessionApplyResult,
+  SessionCommandEntry,
+  SessionCommitResult,
+  SessionSummary
+} from '@shared/types'
 import { getErrorMessage } from '../error-utils'
 import {
   createTerminalOptions,
@@ -38,7 +43,7 @@ interface SessionTileProps {
   onClose: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
   applySession: () => Promise<SessionApplyResult>
-  commitSession: (message: string) => Promise<void>
+  commitSession: (message: string) => Promise<SessionCommitResult>
   discardSessionChanges: () => Promise<void>
   isMaximized: boolean
   fitNonce: number
@@ -63,6 +68,24 @@ function cleanupLabel(session: SessionSummary): string {
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function writeConflictSummary(
+  conflicts: SessionApplyResult['conflicts'],
+  enqueueOutput: (data: string) => void,
+  prefix: string
+): void {
+  if (conflicts.length === 0) {
+    return
+  }
+
+  enqueueOutput(`\r\n\x1b[38;2;255;170;170m${prefix}: ${conflicts.length} conflict(s).\x1b[0m\r\n`)
+  for (const conflict of conflicts.slice(0, 8)) {
+    enqueueOutput(`\x1b[38;2;143;165;184mconflict:\x1b[0m ${conflict.path}\r\n`)
+  }
+  if (conflicts.length > 8) {
+    enqueueOutput(`\x1b[38;2;143;165;184m...and ${conflicts.length - 8} more\x1b[0m\r\n`)
+  }
 }
 
 export function SessionTile({
@@ -407,21 +430,50 @@ export function SessionTile({
     try {
       if (op === 'apply') {
         const result = await applySession()
-        if (result.conflicts.length > 0) {
-          enqueueOutput(`\r\n\x1b[38;2;255;170;170mApply completed with ${result.conflicts.length} conflict(s).\x1b[0m\r\n`)
-          for (const conflict of result.conflicts.slice(0, 8)) {
-            enqueueOutput(`\x1b[38;2;143;165;184mconflict:\x1b[0m ${conflict.path}\r\n`)
-          }
-          if (result.conflicts.length > 8) {
-            enqueueOutput(`\x1b[38;2;143;165;184m...and ${result.conflicts.length - 8} more\x1b[0m\r\n`)
-          }
+        if (session.workspaceStrategy === 'git-worktree') {
+          enqueueOutput('\r\n\x1b[38;2;140;245;221mMerged the worktree branch into the main project.\x1b[0m\r\n')
+        } else if (result.appliedPaths.length > 0) {
+          enqueueOutput(`\r\n\x1b[38;2;140;245;221mSynced ${result.appliedPaths.length} file(s) into the main project files.\x1b[0m\r\n`)
         } else {
-          enqueueOutput(`\r\n\x1b[38;2;140;245;221mApplied ${result.appliedPaths.length} file(s) back to the main project.\x1b[0m\r\n`)
+          enqueueOutput('\r\n\x1b[38;2;143;165;184mNo sandbox changes were ready to sync into the main project.\x1b[0m\r\n')
         }
+        if (result.remainingPaths.length > 0) {
+          enqueueOutput(`\x1b[38;2;143;165;184m${result.remainingPaths.length} change(s) still remain in the workspace.\x1b[0m\r\n`)
+        }
+        writeConflictSummary(result.conflicts, enqueueOutput, 'Sync completed')
       }
       if (op === 'commit') {
-        const msg = prompt('Commit message:', 'Agent update') || 'Update'
-        await commitSession(msg)
+        const defaultMessage = session.workspaceStrategy === 'sandbox-copy'
+          ? 'Sentinel sandbox update'
+          : 'Agent update'
+        const messagePrompt = session.workspaceStrategy === 'sandbox-copy'
+          ? 'Commit message for the main project:'
+          : 'Commit message:'
+        const response = prompt(messagePrompt, defaultMessage)
+        if (response === null) {
+          return
+        }
+
+        const result = await commitSession(response.trim() || defaultMessage)
+        if (result.createdCommit) {
+          const target = session.workspaceStrategy === 'sandbox-copy'
+            ? 'the main project'
+            : 'the worktree branch'
+          const hashSuffix = result.commitHash ? ` as ${result.commitHash}` : ''
+          enqueueOutput(`\r\n\x1b[38;2;140;245;221mCommitted ${result.committedPaths.length} file(s) to ${target}${hashSuffix}.\x1b[0m\r\n`)
+        } else if (result.conflicts.length > 0) {
+          enqueueOutput('\r\n\x1b[38;2;255;170;170mNo commit was created because every sandbox change is still blocked by conflicts.\x1b[0m\r\n')
+        } else {
+          enqueueOutput('\r\n\x1b[38;2;143;165;184mNo commit was created because there were no commit-ready changes.\x1b[0m\r\n')
+        }
+
+        if (result.appliedPaths.length > 0 && session.workspaceStrategy === 'sandbox-copy') {
+          enqueueOutput(`\x1b[38;2;143;165;184m${result.appliedPaths.length} sandbox file(s) were synced into the main project.\x1b[0m\r\n`)
+        }
+        if (result.remainingPaths.length > 0) {
+          enqueueOutput(`\x1b[38;2;143;165;184m${result.remainingPaths.length} change(s) still remain in the workspace.\x1b[0m\r\n`)
+        }
+        writeConflictSummary(result.conflicts, enqueueOutput, 'Commit completed')
       }
       if (op === 'discard') {
         const confirmed = confirm(
@@ -439,6 +491,8 @@ export function SessionTile({
   }
 
   const isClosing = session.status === 'closing' || session.status === 'closed'
+  const canCommitSession = session.workspaceStrategy === 'git-worktree'
+  const commitTitle = 'Commit Worktree Changes'
   const filteredHistory = historyQuery.trim()
     ? historyEntries.filter((e) => e.command.toLowerCase().includes(historyQuery.toLowerCase()))
     : historyEntries
@@ -454,7 +508,7 @@ export function SessionTile({
           <span className={`h-1.5 w-1.5 rounded-full ${statusColor(session.status)}`} />
           <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">{session.label}</span>
           <span className="text-[9px] uppercase tracking-[0.2em] text-sentinel-mist/70">
-            {session.workspaceStrategy === 'sandbox-copy' ? 'sandbox' : 'worktree'}
+            {session.workspaceStrategy === 'sandbox-copy' ? 'local sandbox' : 'git worktree'}
           </span>
           {modifiedPaths.length > 0 && (
             <span className="text-[9px] text-amber-400/80 tracking-widest">{modifiedPaths.length} changes</span>
@@ -466,11 +520,11 @@ export function SessionTile({
           <button className={`px-1.5 py-0.5 text-[9px] uppercase tracking-widest transition ${viewMode === 'review' ? 'text-emerald-400' : 'text-white/30 hover:text-white/70'}`} onClick={() => setViewMode('review')} title="Diff"><Code2 className="h-2.5 w-2.5" /></button>
           <button className={`px-1.5 py-0.5 text-[9px] uppercase tracking-widest transition ${viewMode === 'history' ? 'text-sentinel-accent' : 'text-white/30 hover:text-white/70'}`} onClick={() => setViewMode('history')} title="History"><History className="h-2.5 w-2.5" /></button>
           <div className="mx-1 h-3 w-px bg-white/10" />
-          {session.workspaceStrategy === 'git-worktree' && (
-            <button className="px-1 text-white/30 hover:text-emerald-300 transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('commit')} title="Commit"><GitCommit className="h-2.5 w-2.5" /></button>
+          {canCommitSession && (
+            <button className="px-1 text-white/30 hover:text-emerald-300 transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('commit')} title={commitTitle}><GitCommit className="h-2.5 w-2.5" /></button>
           )}
           <button className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('discard')} title="Discard"><Trash2 className="h-2.5 w-2.5" /></button>
-          <button className="px-1 text-white/30 hover:text-sentinel-glow transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('apply')} title={session.workspaceStrategy === 'sandbox-copy' ? 'Apply to Main Project' : 'Merge to Main'}>{session.workspaceStrategy === 'sandbox-copy' ? <CopyCheck className="h-2.5 w-2.5" /> : <GitMerge className="h-2.5 w-2.5" />}</button>
+          <button className="px-1 text-white/30 hover:text-sentinel-glow transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('apply')} title={session.workspaceStrategy === 'sandbox-copy' ? 'Sync to Main Project Files' : 'Merge to Main'}>{session.workspaceStrategy === 'sandbox-copy' ? <CopyCheck className="h-2.5 w-2.5" /> : <GitMerge className="h-2.5 w-2.5" />}</button>
           <div className="mx-1 h-3 w-px bg-white/10" />
           <button className="px-1 text-white/30 hover:text-sentinel-accent transition disabled:opacity-20" disabled={isClosing} onClick={healTerminalDisplay} title="Recover display">
             <RefreshCw className="h-2.5 w-2.5" />
