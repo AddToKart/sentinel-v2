@@ -501,10 +501,10 @@ export default function App(): JSX.Element {
           <Panel
             panelRef={sidebarPanelRef}
             defaultSize={18}
-            minSize={14}
+            minSize={0}
             collapsible
-            collapsedSize={6}
-            className="transition-all duration-300 ease-in-out"
+            collapsedSize={0}
+            className="transition-[flex-basis,width,max-width,min-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
             style={{ overflow: 'hidden' }}
           >
             <Sidebar
@@ -525,7 +525,13 @@ export default function App(): JSX.Element {
             />
           </Panel>
 
-          <Separator className="relative w-[3px] bg-transparent hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40 transition-colors" />
+          <Separator
+            className={`relative bg-transparent transition-[width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              sidebarCollapsed
+                ? 'pointer-events-none w-0 opacity-0'
+                : 'w-[3px] opacity-100 hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40'
+            }`}
+          />
 
           <Panel className="flex flex-col min-h-0 min-w-0" defaultSize={82}>
             <div className="relative flex-1 min-h-0 overflow-hidden">
