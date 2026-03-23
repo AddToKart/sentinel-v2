@@ -2,7 +2,7 @@ impl SentinelManager {
     fn handle_session_output(&self, app: &AppHandle, session_id: &str, data: String) {
         let mut emit_state = None;
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = inner.sessions.get_mut(session_id) {
                 if record.summary.status == SessionStatus::Starting {
                     record.summary.status = SessionStatus::Ready;
@@ -25,7 +25,7 @@ impl SentinelManager {
     fn handle_ide_output(&self, app: &AppHandle, data: String) {
         let mut emit_state = None;
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = inner.ide.record.as_mut() {
                 if record.state.status == IdeStatus::Starting {
                     record.state.status = IdeStatus::Ready;
@@ -48,7 +48,7 @@ impl SentinelManager {
         forced_error: Option<String>,
     ) {
         let cleanup_input = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.sessions.get_mut(&session_id) else {
                 return;
             };
@@ -93,7 +93,7 @@ impl SentinelManager {
         );
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = inner.sessions.get_mut(&session_id) {
                 match cleanup_result {
                     Ok(cleanup_state) => {
@@ -123,7 +123,7 @@ impl SentinelManager {
         forced_error: Option<String>,
     ) {
         let state = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.ide.record.as_mut() else {
                 return;
             };
@@ -158,7 +158,7 @@ impl SentinelManager {
         self.refresh_tab_metrics(app);
 
         let active_session_ids = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .values()
@@ -179,7 +179,7 @@ impl SentinelManager {
         }
 
         let root_ids = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             active_session_ids
                 .iter()
                 .filter_map(|session_id| {
@@ -196,7 +196,7 @@ impl SentinelManager {
 
         for session_id in &active_session_ids {
             let maybe_snapshot = {
-                let inner = self.inner.lock().expect("state poisoned");
+                let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 inner
                     .sessions
                     .get(session_id)
@@ -205,7 +205,7 @@ impl SentinelManager {
             };
 
             {
-                let mut inner = self.inner.lock().expect("state poisoned");
+                let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(record) = inner.sessions.get_mut(session_id) {
                     if let Some(snapshot) = maybe_snapshot {
                         let cpu_percent =
@@ -248,7 +248,7 @@ impl SentinelManager {
         }
 
         let session_updates = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let mut updates = Vec::new();
             for session_id in &active_session_ids {
                 if let Some(record) = inner.sessions.get_mut(session_id) {
@@ -273,7 +273,7 @@ impl SentinelManager {
 
     fn refresh_ide_workspace_diffs(&self, app: &AppHandle) -> Result<(), String> {
         let (workspace_path, sandbox_state) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (
                 inner.ide.workspace_path.clone(),
                 inner.ide.sandbox_state.clone(),
@@ -286,7 +286,7 @@ impl SentinelManager {
         let (modified_paths, next_cache) =
             refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
         let should_emit = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.ide.sandbox_state = Some(SandboxWorkspaceState {
                 baseline_hashes: sandbox_state.baseline_hashes,
                 scan_cache: next_cache,
@@ -310,7 +310,7 @@ impl SentinelManager {
 
     fn emit_session_state(&self, app: &AppHandle, session_id: &str) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .get(session_id)
@@ -323,7 +323,7 @@ impl SentinelManager {
 
     fn emit_project_state(&self, app: &AppHandle) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project.clone()
         };
         emit_event(app, EVENT_PROJECT_STATE, &payload);
@@ -331,7 +331,7 @@ impl SentinelManager {
 
     fn emit_ide_state(&self, app: &AppHandle) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .ide
                 .record
@@ -344,7 +344,7 @@ impl SentinelManager {
 
     fn emit_session_metrics(&self, app: &AppHandle, session_id: &str) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .get(session_id)
@@ -363,7 +363,7 @@ impl SentinelManager {
 
     fn emit_session_history(&self, app: &AppHandle, session_id: &str) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .get(session_id)
@@ -379,7 +379,7 @@ impl SentinelManager {
 
     fn emit_session_diff(&self, app: &AppHandle, session_id: &str) {
         let payload = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .get(session_id)
@@ -396,7 +396,7 @@ impl SentinelManager {
 
     fn emit_workspace_state(&self, app: &AppHandle) {
         let summary = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             update_workspace_summary(&mut inner);
             inner.workspace_summary.clone()
         };
@@ -413,7 +413,7 @@ impl SentinelManager {
         detail: Option<String>,
     ) {
         let entry = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let entry = ActivityLogEntry {
                 id: format!("{}-{}", create_timestamp(), create_token()),
                 timestamp: now_millis(),

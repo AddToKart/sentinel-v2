@@ -51,7 +51,7 @@ impl SentinelManager {
         };
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.tabs.insert(tab_id.clone(), record);
         }
 
@@ -72,7 +72,7 @@ impl SentinelManager {
 
     pub fn close_tab(self: &Arc<Self>, app: &AppHandle, tab_id: &str) -> Result<(), String> {
         let (pid, killer, should_wait_for_shutdown) = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .tabs
                 .get_mut(tab_id)
@@ -113,7 +113,7 @@ impl SentinelManager {
                 let start = now_millis();
                 loop {
                     let done = {
-                        let inner = manager.inner.lock().expect("state poisoned");
+                        let inner = manager.inner.lock().unwrap_or_else(|e| e.into_inner());
                         inner
                             .tabs
                             .get(&tab_id_owned)
@@ -150,7 +150,7 @@ impl SentinelManager {
         }
 
         let master = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .tabs
                 .get_mut(tab_id)
@@ -169,7 +169,7 @@ impl SentinelManager {
 
     pub fn send_tab_input(self: &Arc<Self>, tab_id: &str, data: &str) -> Result<(), String> {
         let writer = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .tabs
                 .get(tab_id)
@@ -181,7 +181,7 @@ impl SentinelManager {
     }
 
     fn get_next_terminal_number(&self) -> usize {
-        let inner = self.inner.lock().expect("state poisoned");
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner
             .tabs
             .values()
@@ -247,7 +247,10 @@ impl SentinelManager {
                             let chunk = String::from_utf8_lossy(&buffer[..size]).to_string();
                             manager.handle_tab_output(&app_handle, &event_tab_id, chunk);
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            eprintln!("[sentinel] Tab {} I/O error: {}", event_tab_id, e);
+                            break;
+                        }
                     }
                 }
             });
@@ -257,9 +260,19 @@ impl SentinelManager {
         {
             let manager = self.clone();
             let app_handle = app.clone();
+            let event_tab_id = tab_id.clone();
             thread::spawn(move || {
-                let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
-                manager.finalize_tab(app_handle, tab_id, exit_code, None);
+                match child.wait() {
+                    Ok(status) => {
+                        let exit_code = Some(status.exit_code() as i32);
+                        manager.finalize_tab(app_handle, event_tab_id, exit_code, None);
+                    }
+                    Err(e) => {
+                        eprintln!("[sentinel] Tab {} wait error: {}", event_tab_id, e);
+                        // Still finalize the tab even if we can't get exit code
+                        manager.finalize_tab(app_handle, event_tab_id, None, Some(e.to_string()));
+                    }
+                }
             });
         }
 
@@ -290,7 +303,7 @@ impl SentinelManager {
         forced_error: Option<String>,
     ) {
         // Use a single lock for the entire operation
-        let mut inner = self.inner.lock().expect("state poisoned");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 
         let Some(record) = inner.tabs.get_mut(&tab_id) else {
             return;
@@ -346,7 +359,7 @@ impl SentinelManager {
 
     pub fn refresh_tab_metrics(&self, app: &AppHandle) {
         let tab_ids: Vec<String> = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .tabs
                 .iter()
@@ -362,7 +375,7 @@ impl SentinelManager {
 
     fn sample_tab_metrics(&self, app: &AppHandle, tab_id: &str) {
         let (pid, last_cpu, last_sampled) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.tabs.get(tab_id) else {
                 return;
             };
@@ -403,7 +416,7 @@ impl SentinelManager {
         };
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.tabs.get_mut(tab_id) else {
                 return;
             };

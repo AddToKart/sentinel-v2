@@ -408,13 +408,20 @@ export default function App(): JSX.Element {
       return
     }
 
+    // Optimistically remove the tab so it never becomes a zombie, even if
+    // the backend errors (e.g. process already exited before user clicked X).
+    setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
+    clearTabOutput(tabId)
+
     try {
       await sentinel.closeTab(tabId)
-
-      setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
-      clearTabOutput(tabId)
     } catch (error) {
-      setErrorMessage(`Failed to close tab: ${getErrorMessage(error)}`)
+      // Only surface the error if it isn't "Tab not found" — that just means
+      // the process already exited cleanly before we sent the close request.
+      const msg = getErrorMessage(error)
+      if (!msg.toLowerCase().includes('not found')) {
+        setErrorMessage(`Failed to close tab: ${msg}`)
+      }
     }
   }
 

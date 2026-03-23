@@ -211,7 +211,7 @@ fn track_command_input(
 }
 
 fn resize_terminal(master: &SharedMaster, cols: u16, rows: u16) -> Result<(), String> {
-    let master = master.lock().expect("pty poisoned");
+    let master = master.lock().unwrap_or_else(|e| e.into_inner());
     master
         .resize(PtySize {
             rows,
@@ -223,13 +223,13 @@ fn resize_terminal(master: &SharedMaster, cols: u16, rows: u16) -> Result<(), St
 }
 
 fn write_terminal(writer: &SharedWriter, data: &[u8]) -> Result<(), String> {
-    let mut writer = writer.lock().expect("writer poisoned");
+    let mut writer = writer.lock().unwrap_or_else(|e| e.into_inner());
     writer.write_all(data).map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
 }
 
 fn kill_with_killer(killer: &SharedKiller) -> Result<(), String> {
-    let mut killer = killer.lock().expect("killer poisoned");
+    let mut killer = killer.lock().unwrap_or_else(|e| e.into_inner());
     killer.kill().map_err(|error| error.to_string())
 }
 

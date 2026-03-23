@@ -262,7 +262,10 @@ export function IdeTerminalPanel({
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    void ensureTerminal()
+    ensureTerminal().catch((error) => {
+      console.error('Failed to ensure IDE terminal:', error)
+      setTerminalState((prev) => ({ ...prev, status: 'error', error: getErrorMessage(error) }))
+    })
 
     return () => {
       observer.disconnect()
@@ -301,7 +304,10 @@ export function IdeTerminalPanel({
   useEffect(() => {
     if (lastProjectPathRef.current !== projectPath) {
       lastProjectPathRef.current = projectPath
-      void ensureTerminal(true)
+      ensureTerminal(true).catch((error) => {
+        console.error('Failed to ensure IDE terminal on project change:', error)
+        setTerminalState((prev) => ({ ...prev, status: 'error', error: getErrorMessage(error) }))
+      })
     }
   }, [projectPath])
 
@@ -430,7 +436,10 @@ export function IdeTerminalPanel({
                 return
               }
 
-              void ensureTerminal(true)
+              ensureTerminal(true).catch((error) => {
+                console.error('Failed to reconnect IDE terminal:', error)
+                enqueueOutput(`\r\n\x1b[38;2;255;170;170mReconnection failed: ${getErrorMessage(error)}\x1b[0m\r\n`)
+              })
             }}
             title={terminalState.status === 'ready' ? 'Recover display' : 'Reconnect shell'}
             type="button"

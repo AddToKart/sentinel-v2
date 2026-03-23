@@ -1,7 +1,7 @@
 impl SentinelManager {
     pub fn ensure_ide_terminal(self: &Arc<Self>, app: &AppHandle) -> Result<IdeTerminalState, String> {
         let project = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project.clone()
         };
 
@@ -10,7 +10,7 @@ impl SentinelManager {
             None => {
                 let state = IdeTerminalState::idle();
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.ide.record = None;
                 }
                 emit_event(app, EVENT_IDE_STATE, &state);
@@ -21,7 +21,7 @@ impl SentinelManager {
         let (workspace_path, modified_paths) = self.ensure_ide_workspace(app, &project)?;
         let workspace_path_string = path_to_string(&workspace_path);
         let should_reuse = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = inner.ide.record.as_ref() {
                 record.state.workspace_path.as_deref() == Some(workspace_path_string.as_str())
                     && !matches!(record.state.status, IdeStatus::Closed | IdeStatus::Error)
@@ -31,7 +31,7 @@ impl SentinelManager {
         };
 
         if should_reuse {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             return Ok(
                 inner
                     .ide
@@ -64,7 +64,7 @@ impl SentinelManager {
         };
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.ide.record = Some(IdeRecord {
                 state: state.clone(),
                 master: handles.master,
@@ -82,7 +82,7 @@ impl SentinelManager {
 
     pub fn send_ide_terminal_input(self: &Arc<Self>, app: &AppHandle, data: &str) -> Result<(), String> {
         let writer = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.ide.record.as_ref().map(|record| record.writer.clone())
         };
 
@@ -91,7 +91,7 @@ impl SentinelManager {
             None => {
                 let _ = self.ensure_ide_terminal(app)?;
                 let writer = {
-                    let inner = self.inner.lock().expect("state poisoned");
+                    let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner
                         .ide
                         .record
@@ -110,11 +110,11 @@ impl SentinelManager {
         }
 
         let master = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.ide.record.is_none() {
                 drop(inner);
                 let _ = self.ensure_ide_terminal(app)?;
-                inner = self.inner.lock().expect("state poisoned");
+                inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             }
 
             let record = inner
@@ -134,12 +134,12 @@ impl SentinelManager {
 
     pub fn write_ide_file(self: &Arc<Self>, app: &AppHandle, relative_path: &str, content: &str) -> Result<(), String> {
         let project = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project.clone()
         };
         let _ = self.ensure_ide_workspace(app, &project)?;
         let workspace_path = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .ide
                 .workspace_path
@@ -153,7 +153,7 @@ impl SentinelManager {
 
     pub fn apply_ide_workspace(self: &Arc<Self>, app: &AppHandle) -> Result<SessionApplyResult, String> {
         let (project_root, workspace_path, sandbox_state) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (
                 inner.project.path.clone(),
                 inner.ide.workspace_path.clone(),
@@ -181,7 +181,7 @@ impl SentinelManager {
                 let mut result = applied.result;
                 result.remaining_paths = applied.modified_paths.clone();
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.ide.sandbox_state = Some(applied.sandbox_state.clone());
                     if let Some(record) = inner.ide.record.as_mut() {
                         record.state.modified_paths = applied.modified_paths.clone();
@@ -231,7 +231,7 @@ impl SentinelManager {
 
     pub fn discard_ide_workspace_changes(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
         let (project_root, workspace_path) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (inner.project.path.clone(), inner.ide.workspace_path.clone())
         };
 
@@ -252,7 +252,7 @@ impl SentinelManager {
         match discard_ide_workspace_impl(&project_root, &workspace_path) {
             Ok(discarded) => {
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.ide.sandbox_state = Some(discarded.sandbox_state);
                     if let Some(record) = inner.ide.record.as_mut() {
                         record.state.modified_paths = discarded.modified_paths;

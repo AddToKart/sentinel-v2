@@ -26,7 +26,7 @@ impl SentinelManager {
     }
 
     pub fn bootstrap(&self) -> BootstrapPayload {
-        let inner = self.inner.lock().expect("state poisoned");
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut sessions = inner
             .sessions
@@ -114,7 +114,7 @@ impl SentinelManager {
         strategy: SessionWorkspaceStrategy,
     ) -> WorkspacePreferences {
         let preferences = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.preferences.default_session_strategy = strategy;
             update_workspace_summary(&mut inner);
             inner.preferences.clone()
@@ -132,7 +132,7 @@ impl SentinelManager {
         self.handle_project_changed(app, next_project.path.as_ref().map(PathBuf::from))?;
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project = next_project.clone();
             update_workspace_summary(&mut inner);
         }
@@ -144,7 +144,7 @@ impl SentinelManager {
 
     pub fn refresh_project(&self, app: &AppHandle) -> Result<ProjectState, String> {
         let project_path = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project.path.clone()
         };
 

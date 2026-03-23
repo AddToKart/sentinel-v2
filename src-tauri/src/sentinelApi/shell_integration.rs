@@ -61,7 +61,7 @@ impl SentinelManager {
 
     pub fn dispose(&self, _app: &AppHandle) {
         let (session_pids, tab_pids, ide_pid, ide_workspace) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (
                 inner
                     .sessions

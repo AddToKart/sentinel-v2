@@ -5,7 +5,7 @@ impl SentinelManager {
         session_id: &str,
     ) -> Result<SessionApplyResult, String> {
         let session_info = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get(session_id)
@@ -55,7 +55,7 @@ impl SentinelManager {
         message: &str,
     ) -> Result<SessionCommitResult, String> {
         let session_info = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get(session_id)
@@ -105,7 +105,7 @@ impl SentinelManager {
 
         self.refresh_runtime_state(app);
         let remaining_paths = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner
                 .sessions
                 .get(session_id)
@@ -138,7 +138,7 @@ impl SentinelManager {
         session_id: &str,
     ) -> Result<(), String> {
         let session_info = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get(session_id)
@@ -170,7 +170,7 @@ impl SentinelManager {
         ) {
             Ok(next_state) => {
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(record) = inner.sessions.get_mut(session_id) {
                         record.sandbox_state = Some(next_state);
                         record.modified_paths.clear();
@@ -235,7 +235,7 @@ impl SentinelManager {
                 result.remaining_paths = refreshed.0.clone();
 
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(record) = inner.sessions.get_mut(session_id) {
                         record.sandbox_state = Some(SandboxWorkspaceState {
                             baseline_hashes: applied.next_baseline_hashes.clone(),

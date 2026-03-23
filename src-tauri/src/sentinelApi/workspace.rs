@@ -1,7 +1,7 @@
 impl SentinelManager {
     fn handle_project_changed(&self, app: &AppHandle, project_path: Option<PathBuf>) -> Result<(), String> {
         let (needs_close, old_workspace, old_project_root) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (
                 inner.ide.record.is_some(),
                 inner.ide.workspace_path.clone(),
@@ -20,7 +20,7 @@ impl SentinelManager {
             }
             let state = IdeTerminalState::idle();
             {
-                let mut inner = self.inner.lock().expect("state poisoned");
+                let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 inner.ide = IdeRuntime::default();
             }
             emit_event(app, EVENT_IDE_STATE, &state);
@@ -31,7 +31,7 @@ impl SentinelManager {
 
     fn refresh_project_snapshot(&self, app: &AppHandle) -> Result<ProjectState, String> {
         let current_project = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project.clone()
         };
 
@@ -42,7 +42,7 @@ impl SentinelManager {
 
         let next_project = inspect_project(Path::new(project_path))?;
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project = next_project.clone();
             update_workspace_summary(&mut inner);
         }
@@ -54,7 +54,7 @@ impl SentinelManager {
 
     fn close_ide_terminal(&self, app: &AppHandle) -> Result<(), String> {
         let (pid, killer) = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.ide.record.as_mut() else {
                 return Ok(());
             };
@@ -77,7 +77,7 @@ impl SentinelManager {
         let start = now_millis();
         loop {
             let done = {
-                let inner = self.inner.lock().expect("state poisoned");
+                let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 inner.ide.record.as_ref().map(|record| record.finalized).unwrap_or(true)
             };
             if done {
@@ -95,7 +95,7 @@ impl SentinelManager {
         }
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.ide.record = None;
         }
         Ok(())
@@ -237,7 +237,7 @@ impl SentinelManager {
         let project_root_path = PathBuf::from(project_root.clone());
 
         {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let (Some(workspace_path), Some(workspace_project_root), Some(_sandbox_state)) = (
                 inner.ide.workspace_path.as_ref(),
                 inner.ide.workspace_project_root.as_ref(),
@@ -256,7 +256,7 @@ impl SentinelManager {
         }
 
         let old_workspace = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.ide.workspace_path.clone()
         };
         if let Some(old_workspace) = old_workspace {
@@ -290,7 +290,7 @@ impl SentinelManager {
                     None,
                 );
                 {
-                    let mut inner = self.inner.lock().expect("state poisoned");
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                     inner.ide.workspace_path = Some(workspace_path.clone());
                     inner.ide.workspace_project_root = Some(project_root_path);
                     inner.ide.sandbox_state = Some(sandbox_state);

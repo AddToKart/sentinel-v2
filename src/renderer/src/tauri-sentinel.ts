@@ -70,9 +70,13 @@ function subscribe<T>(eventName: string, listener: (payload: T) => void): () => 
   let unlisten: (() => void) | null = null
   let disposed = false
 
-  void listen<T>(eventName, (event) => {
+  listen<T>(eventName, (event) => {
     if (!disposed) {
-      listener(event.payload)
+      try {
+        listener(event.payload)
+      } catch (error) {
+        console.error(`[sentinel] listener error for ${eventName}`, { error })
+      }
     }
   }).then((fn) => {
     if (disposed) {
@@ -80,8 +84,12 @@ function subscribe<T>(eventName: string, listener: (payload: T) => void): () => 
       return
     }
     unlisten = fn
-  }).catch(() => {
+  }).catch((error) => {
+    console.error(`[sentinel] event subscription failed for ${eventName}`, { error })
+    // Mark unlisten as null to indicate subscription failed
     unlisten = null
+    // Note: Future events for this subscription will not be received.
+    // Consider implementing retry logic or notifying the app of subscription failures.
   })
 
   return () => {

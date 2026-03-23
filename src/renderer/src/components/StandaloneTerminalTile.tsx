@@ -30,33 +30,32 @@ export function StandaloneTerminalTile({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const inputDisposableRef = useRef<{ dispose: () => void } | null>(null)
   const writeQueueRef = useRef<string[]>([])
+  const writeFrameRef = useRef<number | null>(null)
   const writeInFlightRef = useRef(false)
   const isDisposedRef = useRef(false)
   const [isMaximized, setIsMaximized] = useState(false)
 
-  // Process write queue
-  const processWriteQueue = () => {
-    // Guard against processing after disposal
-    if (isDisposedRef.current) {
-      writeQueueRef.current = []
-      return
-    }
-
-    const terminal = terminalRef.current
-    if (!terminal || writeInFlightRef.current || writeQueueRef.current.length === 0) {
-      return
-    }
-
-    const chunk = writeQueueRef.current.shift()
-    if (!chunk) return
-
-    writeInFlightRef.current = true
-    terminal.write(chunk, () => {
-      writeInFlightRef.current = false
-      // Check disposal flag before recursing
-      if (!isDisposedRef.current) {
-        processWriteQueue()
+  // Process write queue — batch all pending chunks into a single write to avoid
+  // per-chunk callback recursion, which can fire after disposal and crash xterm.
+  const scheduleWriteFlush = () => {
+    if (writeFrameRef.current !== null) return
+    writeFrameRef.current = requestAnimationFrame(() => {
+      writeFrameRef.current = null
+      if (isDisposedRef.current) {
+        writeQueueRef.current = []
+        return
       }
+      const terminal = terminalRef.current
+      if (!terminal || writeInFlightRef.current || writeQueueRef.current.length === 0) return
+      const chunk = writeQueueRef.current.join('')
+      writeQueueRef.current = []
+      writeInFlightRef.current = true
+      terminal.write(chunk, () => {
+        writeInFlightRef.current = false
+        if (!isDisposedRef.current && writeQueueRef.current.length > 0) {
+          scheduleWriteFlush()
+        }
+      })
     })
   }
 
@@ -128,7 +127,7 @@ export function StandaloneTerminalTile({
     const unsubscribe = subscribeToTabOutput(tab.id, (data: string) => {
       if (isDisposedRef.current) return
       writeQueueRef.current.push(data)
-      processWriteQueue()
+      scheduleWriteFlush()
     })
 
     // Handle input
@@ -146,18 +145,27 @@ export function StandaloneTerminalTile({
     }, 50)
 
     return () => {
-      // Set disposal flag FIRST to prevent any async operations
+      // Set disposal flag FIRST to stop any incoming data
       isDisposedRef.current = true
-      
-      // Clear any pending writes
+
+      // Null the ref immediately so a concurrent remount never sees a stale instance
+      terminalRef.current = null
+
+      // Cancel any pending animation frame writes
+      if (writeFrameRef.current !== null) {
+        cancelAnimationFrame(writeFrameRef.current)
+        writeFrameRef.current = null
+      }
+
+      // Drain the write queue and reset in-flight flag before dispose
       writeQueueRef.current = []
       writeInFlightRef.current = false
-      
+
       // Clean up subscriptions
       unsubscribe()
       inputDisposableRef.current?.dispose()
       inputDisposableRef.current = null
-      
+
       // Dispose fit addon first
       try {
         fitAddon.dispose()
@@ -165,14 +173,13 @@ export function StandaloneTerminalTile({
         // Ignore errors during disposal
       }
       fitAddonRef.current = null
-      
-      // Dispose terminal
+
+      // Dispose terminal last (write queue is already empty, no callbacks can fire)
       try {
         terminal.dispose()
       } catch {
         // Ignore errors during disposal
       }
-      terminalRef.current = null
     }
   }, [tab.id])
 

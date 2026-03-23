@@ -56,7 +56,10 @@ impl SentinelManager {
                             let chunk = String::from_utf8_lossy(&buffer[..size]).to_string();
                             manager.handle_session_output(&app_handle, &event_session_id, chunk);
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            eprintln!("[sentinel] Session {} I/O error: {}", event_session_id, e);
+                            break;
+                        }
                     }
                 }
             });
@@ -65,9 +68,19 @@ impl SentinelManager {
         {
             let manager = self.clone();
             let app_handle = app.clone();
+            let event_session_id = session_id.clone();
             thread::spawn(move || {
-                let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
-                manager.finalize_session(app_handle, session_id, exit_code, None);
+                match child.wait() {
+                    Ok(status) => {
+                        let exit_code = Some(status.exit_code() as i32);
+                        manager.finalize_session(app_handle, event_session_id, exit_code, None);
+                    }
+                    Err(e) => {
+                        eprintln!("[sentinel] Session {} wait error: {}", event_session_id, e);
+                        // Still finalize the session even if we can't get exit code
+                        manager.finalize_session(app_handle, event_session_id, None, Some(e.to_string()));
+                    }
+                }
             });
         }
 
@@ -127,7 +140,10 @@ impl SentinelManager {
                             let chunk = String::from_utf8_lossy(&buffer[..size]).to_string();
                             manager.handle_ide_output(&app_handle, chunk);
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            eprintln!("[sentinel] IDE terminal I/O error: {}", e);
+                            break;
+                        }
                     }
                 }
             });
@@ -137,8 +153,17 @@ impl SentinelManager {
             let manager = self.clone();
             let app_handle = app.clone();
             thread::spawn(move || {
-                let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
-                manager.finalize_ide_terminal(app_handle, exit_code, None);
+                match child.wait() {
+                    Ok(status) => {
+                        let exit_code = Some(status.exit_code() as i32);
+                        manager.finalize_ide_terminal(app_handle, exit_code, None);
+                    }
+                    Err(e) => {
+                        eprintln!("[sentinel] IDE terminal wait error: {}", e);
+                        // Still finalize the IDE terminal even if we can't get exit code
+                        manager.finalize_ide_terminal(app_handle, None, Some(e.to_string()));
+                    }
+                }
             });
         }
 

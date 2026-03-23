@@ -1,7 +1,7 @@
 impl SentinelManager {
     pub fn create_session(self: &Arc<Self>, app: &AppHandle, input: CreateSessionInput) -> Result<SessionSummary, String> {
         let (project, session_count, preferences) = {
-            let inner = self.inner.lock().expect("state poisoned");
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (inner.project.clone(), inner.sessions.len(), inner.preferences.clone())
         };
 
@@ -103,7 +103,7 @@ impl SentinelManager {
         }
 
         {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.sessions.insert(session_id, record);
             update_workspace_summary(&mut inner);
         }
@@ -118,7 +118,7 @@ impl SentinelManager {
 
     pub fn send_input(&self, session_id: &str, data: &str) -> Result<(), String> {
         let writer = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get_mut(session_id)
@@ -135,7 +135,7 @@ impl SentinelManager {
         }
 
         let master = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get_mut(session_id)
@@ -152,7 +152,7 @@ impl SentinelManager {
 
     pub fn close_session(self: &Arc<Self>, app: &AppHandle, session_id: &str) -> Result<(), String> {
         let (pid, killer, should_emit, should_wait_for_shutdown) = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get_mut(session_id)
@@ -202,9 +202,12 @@ impl SentinelManager {
 
     fn finish_closing_session(self: Arc<Self>, app: AppHandle, session_id: String) {
         let start = now_millis();
+        let mut sleep_duration_ms: u64 = 20;
+        let max_sleep_ms: u64 = 500;
+
         loop {
             let done = {
-                let inner = self.inner.lock().expect("state poisoned");
+                let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 inner
                     .sessions
                     .get(&session_id)
@@ -223,11 +226,13 @@ impl SentinelManager {
                 );
                 break;
             }
-            thread::sleep(Duration::from_millis(80));
+            thread::sleep(Duration::from_millis(sleep_duration_ms));
+            // Exponential backoff: increase sleep duration up to max_sleep_ms
+            sleep_duration_ms = (sleep_duration_ms * 2).min(max_sleep_ms);
         }
 
         let removed = {
-            let mut inner = self.inner.lock().expect("state poisoned");
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let removed = inner.sessions.remove(&session_id).is_some();
             if removed {
                 update_workspace_summary(&mut inner);
