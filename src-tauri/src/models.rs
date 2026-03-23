@@ -37,6 +37,23 @@ pub enum IdeStatus {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabType {
+    Dashboard,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabStatus {
+    Starting,
+    Ready,
+    Closing,
+    Closed,
+    Error,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessMetrics {
@@ -225,9 +242,11 @@ pub struct IdeTerminalState {
 pub struct BootstrapPayload {
     pub project: ProjectState,
     pub sessions: Vec<SessionSummary>,
+    pub tabs: Vec<TabSummary>,
     pub summary: WorkspaceSummary,
     pub activity_log: Vec<ActivityLogEntry>,
     pub metrics: Vec<SessionMetricsUpdate>,
+    pub tab_metrics: Vec<TabMetricsUpdate>,
     pub histories: Vec<SessionHistoryUpdate>,
     pub diffs: Vec<SessionDiffUpdate>,
     pub preferences: WorkspacePreferences,
@@ -273,6 +292,55 @@ impl Default for WorkspacePreferences {
             default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabSummary {
+    pub id: String,
+    pub tab_type: TabType,
+    pub label: String,
+    pub status: TabStatus,
+    pub cwd: String,
+    pub shell: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub metrics: ProcessMetrics,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabMetricsUpdate {
+    pub tab_id: String,
+    pub pid: Option<u32>,
+    pub process_ids: Vec<u32>,
+    pub metrics: ProcessMetrics,
+    pub sampled_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabOutputEvent {
+    pub tab_id: String,
+    pub data: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabStateUpdate {
+    pub tab_id: String,
+    pub status: TabStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl Default for WorkspaceSummary {

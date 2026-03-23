@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use models::{
     BootstrapPayload, CreateSessionInput, IdeTerminalState, ProjectState, SessionApplyResult,
-    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, WorkspacePreferences,
+    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, TabSummary,
+    WorkspacePreferences,
 };
 use sentinel::SentinelManager;
 use tauri::{AppHandle, RunEvent, State};
@@ -111,6 +112,52 @@ fn send_ide_terminal_input(
     data: String,
 ) -> Result<(), String> {
     state.send_ide_terminal_input(&app, &data)
+}
+
+#[tauri::command]
+async fn create_standalone_terminal(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    cols: u16,
+    rows: u16,
+) -> Result<TabSummary, String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.create_standalone_terminal(&app, cols, rows)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn close_tab(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    tab_id: String,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.close_tab(&app, &tab_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn resize_tab(
+    state: State<'_, Arc<SentinelManager>>,
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state.resize_tab(&tab_id, cols, rows)
+}
+
+#[tauri::command]
+fn send_tab_input(
+    state: State<'_, Arc<SentinelManager>>,
+    tab_id: String,
+    data: String,
+) -> Result<(), String> {
+    state.send_tab_input(&tab_id, &data)
 }
 
 #[tauri::command]
@@ -244,7 +291,11 @@ pub fn run() {
             commit_session,
             discard_session_changes,
             reveal_in_file_explorer,
-            open_in_system_editor
+            open_in_system_editor,
+            create_standalone_terminal,
+            close_tab,
+            resize_tab,
+            send_tab_input
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

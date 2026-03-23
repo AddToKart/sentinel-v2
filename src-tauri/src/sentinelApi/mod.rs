@@ -3,7 +3,8 @@ use crate::models::{
     IdeTerminalState, ProcessMetrics, ProjectNode, ProjectState, SessionApplyResult,
     SessionCommandEntry, SessionCommitResult, SessionDiffUpdate, SessionHistoryUpdate,
     SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
-    SessionWorkspaceStrategy, WorkspacePreferences, WorkspaceSummary,
+    SessionWorkspaceStrategy, TabMetricsUpdate, TabOutputEvent, TabStateUpdate, TabStatus,
+    TabSummary, TabType, WorkspacePreferences, WorkspaceSummary,
 };
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Deserialize;
@@ -35,6 +36,9 @@ const EVENT_SESSION_HISTORY: &str = "sentinel:session-history";
 const EVENT_SESSION_DIFF: &str = "sentinel:session-diff";
 const EVENT_WORKSPACE_STATE: &str = "sentinel:workspace-state";
 const EVENT_ACTIVITY_LOG: &str = "sentinel:activity-log";
+const EVENT_TAB_OUTPUT: &str = "sentinel:tab-output";
+const EVENT_TAB_STATE: &str = "sentinel:tab-state";
+const EVENT_TAB_METRICS: &str = "sentinel:tab-metrics";
 
 static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -94,6 +98,19 @@ struct IdeRecord {
     finalized: bool,
 }
 
+struct TabRecord {
+    summary: TabSummary,
+    master: SharedMaster,
+    writer: SharedWriter,
+    killer: SharedKiller,
+    terminal_size: TerminalSize,
+    close_requested: bool,
+    finalized: bool,
+    tracked_process_ids: Vec<u32>,
+    last_cpu_total_seconds: Option<f64>,
+    last_sampled_at: Option<i64>,
+}
+
 #[derive(Default)]
 struct IdeRuntime {
     record: Option<IdeRecord>,
@@ -104,6 +121,7 @@ struct IdeRuntime {
 
 struct SentinelState {
     sessions: HashMap<String, SessionRecord>,
+    tabs: HashMap<String, TabRecord>,
     ide: IdeRuntime,
     project: ProjectState,
     preferences: WorkspacePreferences,
@@ -200,4 +218,5 @@ include!("tracking.rs");
 include!("cleanup.rs");
 include!("workspace.rs");
 include!("terminals.rs");
+include!("tabs.rs");
 include!("runtime.rs");

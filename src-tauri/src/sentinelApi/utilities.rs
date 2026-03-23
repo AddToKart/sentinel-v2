@@ -10,7 +10,17 @@ fn now_millis() -> i64 {
 }
 
 fn create_token() -> String {
-    format!("{:06x}", TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed) & 0x00ff_ffff)
+    format!(
+        "{:06x}",
+        TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed) & 0x00ff_ffff
+    )
+}
+
+fn generate_id() -> String {
+    format!(
+        "tab-{:06x}",
+        TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed) & 0x00ff_ffff
+    )
 }
 
 fn create_timestamp() -> String {
@@ -49,7 +59,9 @@ fn sanitize_segment(input: &str) -> String {
 }
 
 fn normalize_relative_path(relative_path: &str) -> Result<String, String> {
-    let replaced = relative_path.trim().replace('/', std::path::MAIN_SEPARATOR_STR);
+    let replaced = relative_path
+        .trim()
+        .replace('/', std::path::MAIN_SEPARATOR_STR);
     let path = Path::new(&replaced);
     let mut normalized = PathBuf::new();
 
@@ -103,7 +115,10 @@ fn should_skip_directory(name: &str) -> bool {
 }
 
 fn should_link_directory(name: &str) -> bool {
-    matches!(name, "node_modules" | ".venv" | "venv" | ".tox" | ".yarn" | ".pnpm-store")
+    matches!(
+        name,
+        "node_modules" | ".venv" | "venv" | ".tox" | ".yarn" | ".pnpm-store"
+    )
 }
 
 fn inspect_project(candidate_path: &Path) -> Result<ProjectState, String> {
@@ -144,8 +159,14 @@ fn build_project_tree(root_path: &Path, depth: usize) -> Result<Vec<ProjectNode>
     });
 
     entries.sort_by(|left, right| {
-        let left_is_dir = left.file_type().map(|value| value.is_dir()).unwrap_or(false);
-        let right_is_dir = right.file_type().map(|value| value.is_dir()).unwrap_or(false);
+        let left_is_dir = left
+            .file_type()
+            .map(|value| value.is_dir())
+            .unwrap_or(false);
+        let right_is_dir = right
+            .file_type()
+            .map(|value| value.is_dir())
+            .unwrap_or(false);
         match (left_is_dir, right_is_dir) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
@@ -158,7 +179,10 @@ fn build_project_tree(root_path: &Path, depth: usize) -> Result<Vec<ProjectNode>
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry.file_type().map(|value| value.is_dir()).unwrap_or(false);
+        let is_dir = entry
+            .file_type()
+            .map(|value| value.is_dir())
+            .unwrap_or(false);
         let children = if is_dir && depth > 0 {
             build_project_tree(&path, depth - 1).ok()
         } else {
@@ -196,7 +220,14 @@ fn run_command(file: &str, args: &[&str], cwd: Option<&Path>) -> Result<String, 
 fn run_powershell(script: &str) -> Result<String, String> {
     run_command(
         "powershell.exe",
-        &["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        &[
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
         None,
     )
 }
@@ -206,7 +237,10 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let args_vec = args.into_iter().map(|value| value.as_ref().to_string()).collect::<Vec<_>>();
+    let args_vec = args
+        .into_iter()
+        .map(|value| value.as_ref().to_string())
+        .collect::<Vec<_>>();
     if let Some(app) = app {
         emit_event(
             app,
@@ -222,7 +256,9 @@ where
             },
         );
     }
-    let borrowed = args_vec.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let borrowed = args_vec
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>();
     run_command("git", &borrowed, Some(cwd))
 }
-

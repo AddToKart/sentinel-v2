@@ -9,8 +9,11 @@ import { GlobalActionBar } from './components/GlobalActionBar'
 import { IdeTerminalPanel } from './components/IdeTerminalPanel'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
+import { WorkspaceTabs } from './components/WorkspaceTabs'
+import { StandaloneTerminalTile } from './components/StandaloneTerminalTile'
 import { getErrorMessage } from './error-utils'
 import { clearIdeTerminalOutput, clearSessionOutput } from './terminal-stream'
+import { clearTabOutput } from './tab-stream'
 import {
   buildWorkspaceOverlayFiles,
   collectProjectPaths,
@@ -25,6 +28,7 @@ import type {
   SessionCommandEntry,
   SessionSummary,
   SessionWorkspaceStrategy,
+  TabSummary,
   WorkspaceSummary
 } from '@shared/types'
 
@@ -50,6 +54,8 @@ const defaultIdeTerminalState = (): IdeTerminalState => ({
   shell: 'powershell.exe',
   modifiedPaths: []
 })
+
+// Tab types are now defined in shared/types.ts
 
 function getSentinelBridge(): SentinelApi | null {
   return typeof window !== 'undefined' && typeof window.sentinel !== 'undefined'
@@ -82,6 +88,10 @@ export default function App(): JSX.Element {
   const [defaultSessionStrategy, setDefaultSessionStrategy] = useState<SessionWorkspaceStrategy>('sandbox-copy')
   const [ideTerminalState, setIdeTerminalState] = useState<IdeTerminalState>(defaultIdeTerminalState())
   const [windowsBuildNumber, setWindowsBuildNumber] = useState<number | undefined>(undefined)
+
+  // Tab state
+  const [tabs, setTabs] = useState<TabSummary[]>([])
+  const [activeTabId, setActiveTabId] = useState<string>('dashboard')
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
@@ -151,7 +161,40 @@ export default function App(): JSX.Element {
           return cur
         })
       }),
-      sentinelBridge.onIdeTerminalState(setIdeTerminalState)
+      sentinelBridge.onIdeTerminalState(setIdeTerminalState),
+      sentinelBridge.onTabState((update) => {
+        setTabs((cur) => {
+          const existing = cur.find((t) => t.id === update.tabId)
+          if (existing) {
+            if (update.status === 'closed') {
+              return cur.filter((t) => t.id !== update.tabId)
+            }
+            return cur.map((t) =>
+              t.id === update.tabId
+                ? {
+                    ...t,
+                    status: update.status,
+                    pid: update.pid ?? t.pid,
+                    exitCode: update.exitCode ?? t.exitCode,
+                    error: update.error ?? t.error
+                  }
+                : t
+            )
+          }
+          return cur
+        })
+      }),
+      sentinelBridge.onTabMetrics((update) => {
+        setTabs((curTabs) => {
+          const i = curTabs.findIndex((t) => t.id === update.tabId)
+          if (i >= 0) {
+            const n = [...curTabs]
+            n[i] = { ...n[i], metrics: update.metrics, pid: update.pid ?? n[i].pid }
+            return n
+          }
+          return curTabs
+        })
+      })
     ]
 
     async function init() {
@@ -173,6 +216,16 @@ export default function App(): JSX.Element {
         const diffs: Record<string, string[]> = {}
         for (const u of payload.diffs) diffs[u.sessionId] = u.modifiedPaths
         setSessionDiffs(diffs)
+
+        // Initialize tabs with their metrics
+        const tabsWithMetrics = payload.tabs.map((tab) => {
+          const metrics = payload.tabMetrics.find((m) => m.tabId === tab.id)
+          if (metrics) {
+            return { ...tab, metrics: metrics.metrics, pid: metrics.pid ?? tab.pid }
+          }
+          return tab
+        })
+        setTabs(tabsWithMetrics)
       } catch (error) {
         if (disposed) return
         setErrorMessage(`Failed to initialize Sentinel: ${getErrorMessage(error)}`)
@@ -201,16 +254,26 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Trigger a re-fit when sidebar or console changes
+  // Trigger a re-fit when sidebar, console, or active tab changes
   useEffect(() => {
     requestTerminalFit(120)
-  }, [sidebarCollapsed, consoleOpen, sessions.length, maximizedSessionId])
+  }, [sidebarCollapsed, consoleOpen, sessions.length, maximizedSessionId, activeTabId])
 
   useEffect(() => {
     if (globalMode === 'ide') {
       setKeepIdeMounted(true)
     }
   }, [globalMode])
+
+  useEffect(() => {
+    if (activeTabId === 'dashboard') {
+      return
+    }
+
+    if (!tabs.some((tab) => tab.id === activeTabId)) {
+      setActiveTabId(tabs[0]?.id ?? 'dashboard')
+    }
+  }, [activeTabId, tabs])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -321,6 +384,40 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function handleCreateStandaloneTerminal() {
+    const sentinel = getSentinelBridge()
+    if (!sentinel) {
+      setErrorMessage(missingBridgeMessage())
+      return
+    }
+
+    try {
+      // Default terminal size - will be resized by the component
+      const newTab = await sentinel.createStandaloneTerminal(80, 24)
+      setTabs((cur) => [...cur, newTab])
+      setActiveTabId(newTab.id)
+    } catch (error) {
+      setErrorMessage(`Failed to create terminal: ${getErrorMessage(error)}`)
+    }
+  }
+
+  async function handleCloseTab(tabId: string) {
+    const sentinel = getSentinelBridge()
+    if (!sentinel) {
+      setErrorMessage(missingBridgeMessage())
+      return
+    }
+
+    try {
+      await sentinel.closeTab(tabId)
+
+      setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
+      clearTabOutput(tabId)
+    } catch (error) {
+      setErrorMessage(`Failed to close tab: ${getErrorMessage(error)}`)
+    }
+  }
+
   const globalActions = [
     { id: 'new-agent', label: 'New Agent', icon: <Plus className="h-4 w-4" />, execute: () => void handleCreateSession() },
     { id: 'open-project', label: 'Open Repository', icon: <FolderOpen className="h-4 w-4" />, execute: () => void handleOpenProject() },
@@ -349,6 +446,10 @@ export default function App(): JSX.Element {
       [projectPaths.has(file.projectPath) ? 'modified' : 'new']
     ])
   )
+  const activeStandaloneTab =
+    activeTabId !== 'dashboard'
+      ? tabs.find((tab) => tab.id === activeTabId) ?? null
+      : null
 
   const multiplexContent = !hasProject ? (
     <div className="flex h-full items-center justify-center">
@@ -470,6 +571,15 @@ export default function App(): JSX.Element {
 
           {/* Action buttons — in safe left zone */}
           <div className="flex items-center gap-1.5 ml-2">
+            {/* New Terminal button - positioned left of New Agent to clear native window controls */}
+            <button
+              className="inline-flex h-7 items-center gap-1.5 border border-white/10 bg-white/[0.04] px-3 text-[11px] font-semibold text-sentinel-mist transition hover:bg-white/[0.08] hover:text-white"
+              onClick={() => void handleCreateStandaloneTerminal()}
+              title="New Terminal"
+            >
+              <TerminalSquare className="h-3 w-3" />
+              <span className="hidden sm:inline">New Terminal</span>
+            </button>
             <button
               className="inline-flex h-7 items-center gap-1.5 rounded border border-sentinel-accent/30 bg-sentinel-accent/10 px-3 text-[11px] font-semibold text-sentinel-glow transition hover:bg-sentinel-accent/20 disabled:opacity-40"
               disabled={!hasProject}
@@ -534,21 +644,44 @@ export default function App(): JSX.Element {
           />
 
           <Panel className="flex flex-col min-h-0 min-w-0" defaultSize={82}>
+            {/* Tab Bar */}
+            <WorkspaceTabs
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onTabSelect={setActiveTabId}
+              onTabClose={handleCloseTab}
+            />
+
+            {/* Tab Content */}
             <div className="relative flex-1 min-h-0 overflow-hidden">
+              {/* Dashboard Tab */}
               <div
-                aria-hidden={globalMode !== 'multiplex'}
-                className={`absolute inset-0 min-h-0 overflow-hidden transition-opacity duration-150 ${
-                  globalMode === 'multiplex' ? 'opacity-100' : 'pointer-events-none opacity-0'
+                className={`absolute inset-0 min-h-0 overflow-hidden ${
+                  activeTabId === 'dashboard' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
                 }`}
               >
                 {multiplexContent}
               </div>
 
+              {/* Active Terminal Tab */}
+              {activeStandaloneTab && (
+                <div className="absolute inset-0 min-h-0 overflow-hidden opacity-100 z-10">
+                  <StandaloneTerminalTile
+                    key={activeStandaloneTab.id}
+                    tab={activeStandaloneTab}
+                    fitNonce={fitNonce}
+                    onClose={() => handleCloseTab(activeStandaloneTab.id)}
+                    windowsBuildNumber={windowsBuildNumber}
+                  />
+                </div>
+              )}
+
+              {/* IDE Mode (Global) */}
               {(keepIdeMounted || globalMode === 'ide') && (
                 <div
                   aria-hidden={globalMode !== 'ide'}
                   className={`absolute inset-0 min-h-0 overflow-hidden transition-opacity duration-150 ${
-                    globalMode === 'ide' ? 'opacity-100' : 'pointer-events-none opacity-0'
+                    globalMode === 'ide' ? 'opacity-100 z-20' : 'opacity-0 z-0 pointer-events-none'
                   }`}
                 >
                   {ideContent}
@@ -562,6 +695,7 @@ export default function App(): JSX.Element {
               defaultSessionStrategy={defaultSessionStrategy}
               onToggleConsole={() => setConsoleOpen((v) => !v)}
               summary={workspaceSummary}
+              focusedTab={activeStandaloneTab}
             />
           </Panel>
         </Group>

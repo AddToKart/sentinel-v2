@@ -222,6 +222,15 @@ textarea {
     animation-timing-function: ease-out;
   }
 
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
   .fade-in {
     animation-name: sentinel-fade-in;
   }

@@ -116,7 +116,12 @@ impl SentinelManager {
         self.emit_workspace_state(&app);
     }
 
-    fn finalize_ide_terminal(&self, app: AppHandle, exit_code: Option<i32>, forced_error: Option<String>) {
+    fn finalize_ide_terminal(
+        &self,
+        app: AppHandle,
+        exit_code: Option<i32>,
+        forced_error: Option<String>,
+    ) {
         let state = {
             let mut inner = self.inner.lock().expect("state poisoned");
             let Some(record) = inner.ide.record.as_mut() else {
@@ -149,6 +154,9 @@ impl SentinelManager {
     }
 
     fn refresh_runtime_state(&self, app: &AppHandle) {
+        // Refresh tab metrics
+        self.refresh_tab_metrics(app);
+
         let active_session_ids = {
             let inner = self.inner.lock().expect("state poisoned");
             inner
@@ -174,7 +182,12 @@ impl SentinelManager {
             let inner = self.inner.lock().expect("state poisoned");
             active_session_ids
                 .iter()
-                .filter_map(|session_id| inner.sessions.get(session_id).and_then(|record| record.summary.pid))
+                .filter_map(|session_id| {
+                    inner
+                        .sessions
+                        .get(session_id)
+                        .and_then(|record| record.summary.pid)
+                })
                 .collect::<Vec<_>>()
         };
 
@@ -195,25 +208,30 @@ impl SentinelManager {
                 let mut inner = self.inner.lock().expect("state poisoned");
                 if let Some(record) = inner.sessions.get_mut(session_id) {
                     if let Some(snapshot) = maybe_snapshot {
-                        let cpu_percent = match (record.last_cpu_total_seconds, record.last_sampled_at) {
-                            (Some(previous_cpu), Some(previous_sampled_at))
-                                if sampled_at > previous_sampled_at =>
-                            {
-                                let cpu_delta = snapshot.cpu_total_seconds - previous_cpu;
-                                let elapsed = (sampled_at - previous_sampled_at) as f64 / 1000.0;
-                                if elapsed > 0.0 {
-                                    round(cpu_delta.max(0.0) / elapsed * 100.0, 1)
-                                } else {
-                                    0.0
+                        let cpu_percent =
+                            match (record.last_cpu_total_seconds, record.last_sampled_at) {
+                                (Some(previous_cpu), Some(previous_sampled_at))
+                                    if sampled_at > previous_sampled_at =>
+                                {
+                                    let cpu_delta = snapshot.cpu_total_seconds - previous_cpu;
+                                    let elapsed =
+                                        (sampled_at - previous_sampled_at) as f64 / 1000.0;
+                                    if elapsed > 0.0 {
+                                        round(cpu_delta.max(0.0) / elapsed * 100.0, 1)
+                                    } else {
+                                        0.0
+                                    }
                                 }
-                            }
-                            _ => 0.0,
-                        };
+                                _ => 0.0,
+                            };
 
                         record.tracked_process_ids = snapshot.process_ids.clone();
                         record.summary.metrics = ProcessMetrics {
                             cpu_percent,
-                            memory_mb: round(snapshot.working_set_bytes as f64 / 1024.0 / 1024.0, 1),
+                            memory_mb: round(
+                                snapshot.working_set_bytes as f64 / 1024.0 / 1024.0,
+                                1,
+                            ),
                             thread_count: snapshot.thread_count,
                             handle_count: snapshot.handle_count,
                             process_count: snapshot.process_count,
@@ -234,7 +252,8 @@ impl SentinelManager {
             let mut updates = Vec::new();
             for session_id in &active_session_ids {
                 if let Some(record) = inner.sessions.get_mut(session_id) {
-                    let next_modified_paths = collect_workspace_diffs_for_record(record).unwrap_or_default();
+                    let next_modified_paths =
+                        collect_workspace_diffs_for_record(record).unwrap_or_default();
                     if next_modified_paths != record.modified_paths {
                         record.modified_paths = next_modified_paths.clone();
                         updates.push(session_id.clone());
@@ -255,13 +274,17 @@ impl SentinelManager {
     fn refresh_ide_workspace_diffs(&self, app: &AppHandle) -> Result<(), String> {
         let (workspace_path, sandbox_state) = {
             let inner = self.inner.lock().expect("state poisoned");
-            (inner.ide.workspace_path.clone(), inner.ide.sandbox_state.clone())
+            (
+                inner.ide.workspace_path.clone(),
+                inner.ide.sandbox_state.clone(),
+            )
         };
         let (Some(workspace_path), Some(sandbox_state)) = (workspace_path, sandbox_state) else {
             return Ok(());
         };
 
-        let (modified_paths, next_cache) = refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
+        let (modified_paths, next_cache) =
+            refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
         let should_emit = {
             let mut inner = self.inner.lock().expect("state poisoned");
             inner.ide.sandbox_state = Some(SandboxWorkspaceState {
@@ -288,7 +311,10 @@ impl SentinelManager {
     fn emit_session_state(&self, app: &AppHandle, session_id: &str) {
         let payload = {
             let inner = self.inner.lock().expect("state poisoned");
-            inner.sessions.get(session_id).map(|record| record.summary.clone())
+            inner
+                .sessions
+                .get(session_id)
+                .map(|record| record.summary.clone())
         };
         if let Some(payload) = payload {
             emit_event(app, EVENT_SESSION_STATE, &payload);
@@ -319,13 +345,16 @@ impl SentinelManager {
     fn emit_session_metrics(&self, app: &AppHandle, session_id: &str) {
         let payload = {
             let inner = self.inner.lock().expect("state poisoned");
-            inner.sessions.get(session_id).map(|record| SessionMetricsUpdate {
-                session_id: record.summary.id.clone(),
-                pid: record.summary.pid,
-                process_ids: record.tracked_process_ids.clone(),
-                metrics: record.summary.metrics.clone(),
-                sampled_at: now_millis(),
-            })
+            inner
+                .sessions
+                .get(session_id)
+                .map(|record| SessionMetricsUpdate {
+                    session_id: record.summary.id.clone(),
+                    pid: record.summary.pid,
+                    process_ids: record.tracked_process_ids.clone(),
+                    metrics: record.summary.metrics.clone(),
+                    sampled_at: now_millis(),
+                })
         };
         if let Some(payload) = payload {
             emit_event(app, EVENT_SESSION_METRICS, &payload);
@@ -335,10 +364,13 @@ impl SentinelManager {
     fn emit_session_history(&self, app: &AppHandle, session_id: &str) {
         let payload = {
             let inner = self.inner.lock().expect("state poisoned");
-            inner.sessions.get(session_id).map(|record| SessionHistoryUpdate {
-                session_id: record.summary.id.clone(),
-                entries: record.history.clone(),
-            })
+            inner
+                .sessions
+                .get(session_id)
+                .map(|record| SessionHistoryUpdate {
+                    session_id: record.summary.id.clone(),
+                    entries: record.history.clone(),
+                })
         };
         if let Some(payload) = payload {
             emit_event(app, EVENT_SESSION_HISTORY, &payload);
@@ -348,11 +380,14 @@ impl SentinelManager {
     fn emit_session_diff(&self, app: &AppHandle, session_id: &str) {
         let payload = {
             let inner = self.inner.lock().expect("state poisoned");
-            inner.sessions.get(session_id).map(|record| SessionDiffUpdate {
-                session_id: record.summary.id.clone(),
-                modified_paths: record.modified_paths.clone(),
-                updated_at: now_millis(),
-            })
+            inner
+                .sessions
+                .get(session_id)
+                .map(|record| SessionDiffUpdate {
+                    session_id: record.summary.id.clone(),
+                    modified_paths: record.modified_paths.clone(),
+                    updated_at: now_millis(),
+                })
         };
         if let Some(payload) = payload {
             emit_event(app, EVENT_SESSION_DIFF, &payload);

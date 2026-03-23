@@ -60,11 +60,16 @@ impl SentinelManager {
     }
 
     pub fn dispose(&self, _app: &AppHandle) {
-        let (session_pids, ide_pid, ide_workspace) = {
+        let (session_pids, tab_pids, ide_pid, ide_workspace) = {
             let inner = self.inner.lock().expect("state poisoned");
             (
                 inner
                     .sessions
+                    .values()
+                    .map(|record| record.summary.pid)
+                    .collect::<Vec<_>>(),
+                inner
+                    .tabs
                     .values()
                     .map(|record| record.summary.pid)
                     .collect::<Vec<_>>(),
@@ -74,6 +79,9 @@ impl SentinelManager {
         };
 
         for pid in session_pids {
+            let _ = terminate_process_id(pid);
+        }
+        for pid in tab_pids {
             let _ = terminate_process_id(pid);
         }
         let _ = terminate_process_id(ide_pid);

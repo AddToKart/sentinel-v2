@@ -6,6 +6,7 @@ impl SentinelManager {
         Self {
             inner: Mutex::new(SentinelState {
                 sessions: HashMap::new(),
+                tabs: HashMap::new(),
                 ide: IdeRuntime::default(),
                 project: ProjectState::default(),
                 preferences: WorkspacePreferences::default(),
@@ -68,12 +69,32 @@ impl SentinelManager {
             .collect::<Vec<_>>();
         diffs.sort_by(|left, right| left.session_id.cmp(&right.session_id));
 
+        let tabs = inner
+            .tabs
+            .values()
+            .map(|record| record.summary.clone())
+            .collect::<Vec<_>>();
+
+        let tab_metrics = inner
+            .tabs
+            .values()
+            .map(|record| TabMetricsUpdate {
+                tab_id: record.summary.id.clone(),
+                pid: record.summary.pid,
+                process_ids: record.tracked_process_ids.clone(),
+                metrics: record.summary.metrics.clone(),
+                sampled_at: inner.workspace_summary.last_updated,
+            })
+            .collect::<Vec<_>>();
+
         BootstrapPayload {
             project: inner.project.clone(),
             sessions,
+            tabs,
             summary: inner.workspace_summary.clone(),
             activity_log: inner.activity_log.clone(),
             metrics,
+            tab_metrics,
             histories,
             diffs,
             preferences: inner.preferences.clone(),
@@ -102,7 +123,11 @@ impl SentinelManager {
         preferences
     }
 
-    pub fn load_project(&self, app: &AppHandle, candidate_path: String) -> Result<ProjectState, String> {
+    pub fn load_project(
+        &self,
+        app: &AppHandle,
+        candidate_path: String,
+    ) -> Result<ProjectState, String> {
         let next_project = inspect_project(Path::new(&candidate_path))?;
         self.handle_project_changed(app, next_project.path.as_ref().map(PathBuf::from))?;
 

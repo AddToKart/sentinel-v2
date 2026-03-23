@@ -1,4 +1,8 @@
-fn write_workspace_file(workspace_path: &Path, relative_path: &str, content: &str) -> Result<(), String> {
+fn write_workspace_file(
+    workspace_path: &Path,
+    relative_path: &str,
+    content: &str,
+) -> Result<(), String> {
     let absolute_path = resolve_workspace_target(workspace_path, relative_path)?;
     if let Some(parent) = absolute_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -7,7 +11,10 @@ fn write_workspace_file(workspace_path: &Path, relative_path: &str, content: &st
 }
 
 fn parse_git_status_output(raw: &str) -> Vec<String> {
-    let entries = raw.split('\0').filter(|entry| !entry.is_empty()).collect::<Vec<_>>();
+    let entries = raw
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
     let mut modified_paths = Vec::new();
     let mut index = 0;
     while index < entries.len() {
@@ -51,7 +58,8 @@ fn collect_workspace_diffs_for_record(record: &mut SessionRecord) -> Result<Vec<
             .sandbox_state
             .clone()
             .ok_or_else(|| "Sandbox state is unavailable.".to_string())?;
-        let (modified_paths, next_cache) = refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
+        let (modified_paths, next_cache) =
+            refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
         record.sandbox_state = Some(SandboxWorkspaceState {
             baseline_hashes: sandbox_state.baseline_hashes,
             scan_cache: next_cache,
@@ -67,7 +75,9 @@ fn collect_workspace_diffs_for_record(record: &mut SessionRecord) -> Result<Vec<
     Ok(parse_git_status_output(&raw))
 }
 
-fn collect_process_tree_snapshots(root_ids: &[u32]) -> Result<HashMap<u32, ProcessTreeSnapshot>, String> {
+fn collect_process_tree_snapshots(
+    root_ids: &[u32],
+) -> Result<HashMap<u32, ProcessTreeSnapshot>, String> {
     if root_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -129,11 +139,14 @@ fn collect_process_tree_snapshots(root_ids: &[u32]) -> Result<HashMap<u32, Proce
         return Ok(HashMap::new());
     }
 
-    let parsed = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| error.to_string())?;
+    let parsed =
+        serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| error.to_string())?;
     let snapshots = if parsed.is_array() {
-        serde_json::from_value::<Vec<RawProcessTreeSnapshot>>(parsed).map_err(|error| error.to_string())?
+        serde_json::from_value::<Vec<RawProcessTreeSnapshot>>(parsed)
+            .map_err(|error| error.to_string())?
     } else {
-        vec![serde_json::from_value::<RawProcessTreeSnapshot>(parsed).map_err(|error| error.to_string())?]
+        vec![serde_json::from_value::<RawProcessTreeSnapshot>(parsed)
+            .map_err(|error| error.to_string())?]
     };
 
     Ok(snapshots
@@ -173,7 +186,11 @@ fn append_history_entry(history: &mut Vec<SessionCommandEntry>, command: &str, s
     }
 }
 
-fn track_command_input(command_buffer: &mut String, history: &mut Vec<SessionCommandEntry>, data: &str) {
+fn track_command_input(
+    command_buffer: &mut String,
+    history: &mut Vec<SessionCommandEntry>,
+    data: &str,
+) {
     for character in data.chars() {
         match character {
             '\r' | '\n' => {
@@ -216,6 +233,15 @@ fn kill_with_killer(killer: &SharedKiller) -> Result<(), String> {
     killer.kill().map_err(|error| error.to_string())
 }
 
+fn kill_process_tree(killer: &SharedKiller) -> Result<(), String> {
+    kill_with_killer(killer)
+}
+
+fn capture_process_tree_snapshot(root_id: u32) -> Option<ProcessTreeSnapshot> {
+    let snapshots = collect_process_tree_snapshots(&[root_id]).ok()?;
+    snapshots.get(&root_id).cloned()
+}
+
 fn terminate_process_id(pid: Option<u32>) -> Result<(), String> {
     let Some(pid) = pid else {
         return Ok(());
@@ -238,4 +264,3 @@ fn terminate_process_id(pid: Option<u32>) -> Result<(), String> {
         }
     }
 }
-

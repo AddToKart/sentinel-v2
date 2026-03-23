@@ -19,6 +19,10 @@ import type {
   SessionOutputEvent,
   SessionSummary,
   SessionWorkspaceStrategy,
+  TabMetricsUpdate,
+  TabOutputEvent,
+  TabStateUpdate,
+  TabSummary,
   WorkspacePreferences,
   WorkspaceSummary
 } from '@shared/types'
@@ -213,6 +217,27 @@ const api: SentinelApi = {
   },
   onActivityLog(listener: (entry: ActivityLogEntry) => void) {
     return subscribe<ActivityLogEntry>('sentinel:activity-log', listener)
+  },
+  createStandaloneTerminal(cols: number, rows: number) {
+    return invokeCommand<TabSummary>('create_standalone_terminal', { cols, rows })
+  },
+  closeTab(tabId: string) {
+    return invokeCommand<void>('close_tab', { tabId })
+  },
+  resizeTab(tabId: string, cols: number, rows: number) {
+    return invokeCommand<void>('resize_tab', { tabId, cols, rows })
+  },
+  sendTabInput(tabId: string, data: string) {
+    return invokeCommand<void>('send_tab_input', { tabId, data })
+  },
+  onTabOutput(listener: (event: TabOutputEvent) => void) {
+    return subscribe<TabOutputEvent>('sentinel:tab-output', listener)
+  },
+  onTabState(listener: (payload: TabStateUpdate) => void) {
+    return subscribe<TabStateUpdate>('sentinel:tab-state', listener)
+  },
+  onTabMetrics(listener: (payload: TabMetricsUpdate) => void) {
+    return subscribe<TabMetricsUpdate>('sentinel:tab-metrics', listener)
   }
 }
 

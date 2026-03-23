@@ -4,6 +4,10 @@ export type CleanupState = 'active' | 'removed' | 'preserved' | 'failed'
 
 export type SessionWorkspaceStrategy = 'sandbox-copy' | 'git-worktree'
 
+export type TabType = 'dashboard' | 'terminal'
+
+export type TabStatus = 'starting' | 'ready' | 'closing' | 'closed' | 'error'
+
 export interface ProcessMetrics {
   cpuPercent: number
   memoryMb: number
@@ -52,6 +56,41 @@ export interface SessionSummary {
   exitCode?: number | null
   error?: string
   metrics: ProcessMetrics
+}
+
+export interface TabSummary {
+  id: string
+  tabType: TabType
+  label: string
+  status: TabStatus
+  cwd: string
+  shell: string
+  pid?: number
+  createdAt: number
+  exitCode?: number | null
+  error?: string
+  metrics: ProcessMetrics
+}
+
+export interface TabMetricsUpdate {
+  tabId: string
+  pid?: number
+  processIds: number[]
+  metrics: ProcessMetrics
+  sampledAt: number
+}
+
+export interface TabOutputEvent {
+  tabId: string
+  data: string
+}
+
+export interface TabStateUpdate {
+  tabId: string
+  status: TabStatus
+  pid?: number
+  exitCode?: number | null
+  error?: string
 }
 
 export interface WorkspaceSummary {
@@ -139,9 +178,11 @@ export interface IdeTerminalState {
 export interface BootstrapPayload {
   project: ProjectState
   sessions: SessionSummary[]
+  tabs: TabSummary[]
   summary: WorkspaceSummary
   activityLog: ActivityLogEntry[]
   metrics: SessionMetricsUpdate[]
+  tabMetrics: TabMetricsUpdate[]
   histories: SessionHistoryUpdate[]
   diffs: SessionDiffUpdate[]
   preferences: WorkspacePreferences
@@ -189,6 +230,10 @@ export interface SentinelApi {
   discardSessionChanges: (sessionId: string) => Promise<void>
   revealInFileExplorer: (filePath: string) => Promise<void>
   openInSystemEditor: (filePath: string) => Promise<void>
+  createStandaloneTerminal: (cols: number, rows: number) => Promise<TabSummary>
+  closeTab: (tabId: string) => Promise<void>
+  resizeTab: (tabId: string, cols: number, rows: number) => Promise<void>
+  sendTabInput: (tabId: string, data: string) => Promise<void>
   onSessionOutput: (listener: (event: SessionOutputEvent) => void) => () => void
   onIdeTerminalOutput: (listener: (event: IdeTerminalOutputEvent) => void) => () => void
   onProjectState: (listener: (project: ProjectState) => void) => () => void
@@ -199,6 +244,9 @@ export interface SentinelApi {
   onSessionDiff: (listener: (payload: SessionDiffUpdate) => void) => () => void
   onWorkspaceState: (listener: (summary: WorkspaceSummary) => void) => () => void
   onActivityLog: (listener: (entry: ActivityLogEntry) => void) => () => void
+  onTabOutput: (listener: (event: TabOutputEvent) => void) => () => void
+  onTabState: (listener: (payload: TabStateUpdate) => void) => () => void
+  onTabMetrics: (listener: (payload: TabMetricsUpdate) => void) => () => void
 }
 
 declare global {
