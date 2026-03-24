@@ -92,6 +92,8 @@ export default function App(): JSX.Element {
   // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [ideTabIds, setIdeTabIds] = useState<string[]>([])
+  const [agentTerminalCounter, setAgentTerminalCounter] = useState(0)
+  const [ideTerminalCounter, setIdeTerminalCounter] = useState(0)
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
@@ -435,7 +437,10 @@ export default function App(): JSX.Element {
 
     try {
       // Default terminal size - will be resized by the component
-      const newTab = await sentinel.createStandaloneTerminal(undefined, 80, 24)
+      const nextCount = agentTerminalCounter + 1
+      const label = `Terminal ${nextCount}`
+      const newTab = await sentinel.createStandaloneTerminal(undefined, label, 80, 24)
+      setAgentTerminalCounter(nextCount)
       setTabs((cur) => [...cur, newTab])
       setActiveTabId(newTab.id)
     } catch (error) {
@@ -592,7 +597,10 @@ export default function App(): JSX.Element {
             const sentinel = getSentinelBridge()
             if (!sentinel) return
             try {
-              const newTab = await sentinel.createStandaloneTerminal(ideTerminalState?.workspacePath, 80, 24)
+              const nextCount = ideTerminalCounter + 1
+              const label = `Terminal ${nextCount}`
+              const newTab = await sentinel.createStandaloneTerminal(ideTerminalState?.workspacePath, label, 80, 24)
+              setIdeTerminalCounter(nextCount)
               setIdeTabIds((cur) => [...cur, newTab.id])
               setTabs((cur) => [...cur, newTab])
               setActiveIdeTerminalId(newTab.id)

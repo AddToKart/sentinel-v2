@@ -226,8 +226,8 @@ const api: SentinelApi = {
   onActivityLog(listener: (entry: ActivityLogEntry) => void) {
     return subscribe<ActivityLogEntry>('sentinel:activity-log', listener)
   },
-  createStandaloneTerminal(cwd: string | undefined, cols: number, rows: number) {
-    return invokeCommand<TabSummary>('create_standalone_terminal', { cwd, cols, rows })
+  createStandaloneTerminal(cwd: string | undefined, label: string | undefined, cols: number, rows: number) {
+    return invokeCommand<TabSummary>('create_standalone_terminal', { cwd, label, cols, rows })
   },
   closeTab(tabId: string) {
     return invokeCommand<void>('close_tab', { tabId })

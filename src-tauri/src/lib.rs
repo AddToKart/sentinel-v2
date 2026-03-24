@@ -119,12 +119,13 @@ async fn create_standalone_terminal(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     cwd: Option<String>,
+    label: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<TabSummary, String> {
     let manager = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager.create_standalone_terminal(&app, cwd, cols, rows)
+        manager.create_standalone_terminal(&app, cwd, label, cols, rows)
     })
     .await
     .map_err(|error| error.to_string())?

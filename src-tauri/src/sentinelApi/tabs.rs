@@ -3,6 +3,7 @@ impl SentinelManager {
         self: &Arc<Self>,
         app: &AppHandle,
         cwd: Option<String>,
+        label: Option<String>,
         cols: u16,
         rows: u16,
     ) -> Result<TabSummary, String> {
@@ -32,7 +33,7 @@ impl SentinelManager {
         let summary = TabSummary {
             id: tab_id.clone(),
             tab_type: TabType::Terminal,
-            label: format!("Terminal {}", self.get_next_terminal_number()),
+            label: label.unwrap_or_else(|| format!("Terminal {}", self.get_next_terminal_number())),
             status: TabStatus::Starting,
             cwd: path_to_string(&root_dir),
             shell: "powershell.exe".to_string(),
