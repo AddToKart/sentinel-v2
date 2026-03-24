@@ -21,6 +21,8 @@ interface IdeTerminalPanelProps {
   windowsBuildNumber?: number
   onClose?: () => void
   actionsTarget?: HTMLDivElement | null
+  /** When false/undefined the panel is CSS-hidden; defer init until first visible */
+  isVisible?: boolean
 }
 
 function createIdleState(projectPath?: string): IdeTerminalState {
@@ -47,7 +49,8 @@ export function IdeTerminalPanel({
   terminalState: externalState,
   windowsBuildNumber,
   onClose,
-  actionsTarget
+  actionsTarget,
+  isVisible = false
 }: IdeTerminalPanelProps): JSX.Element {
   const terminalHostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -62,6 +65,8 @@ export function IdeTerminalPanel({
   const lastGeometryRef = useRef({ width: 0, height: 0, cols: 0, rows: 0 })
   const lastProjectPathRef = useRef<string | undefined>(projectPath)
   const hasWrittenExitRef = useRef(false)
+  // Track if we've done the initial terminal connection
+  const hasInitializedRef = useRef(false)
 
   const [terminalState, setTerminalState] = useState<IdeTerminalState>(() => externalState)
   const [connecting, setConnecting] = useState(false)
@@ -266,11 +271,9 @@ export function IdeTerminalPanel({
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
-
-    ensureTerminal().catch((error) => {
-      console.error('Failed to ensure IDE terminal:', error)
-      setTerminalState((prev) => ({ ...prev, status: 'error', error: getErrorMessage(error) }))
-    })
+    // NOTE: DO NOT call ensureTerminal() here.
+    // Initialization is deferred to the isVisible effect to prevent a zero-dimension
+    // PTY resize crashing the Tauri backend when the panel is first mounted hidden.
 
     return () => {
       observer.disconnect()
@@ -299,8 +302,24 @@ export function IdeTerminalPanel({
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      hasInitializedRef.current = false
     }
   }, [windowsBuildNumber])
+
+  // Defer initial ensureTerminal() until the panel is actually visible.
+  // This prevents a zero-dimension PTY resize crashing the Tauri backend.
+  useEffect(() => {
+    if (!isVisible || hasInitializedRef.current) return
+    hasInitializedRef.current = true
+    ensureTerminal().catch((error) => {
+      console.error('Failed to ensure IDE terminal on first show:', error)
+      setTerminalState((prev) => ({ ...prev, status: 'error', error: getErrorMessage(error) }))
+    })
+    requestAnimationFrame(() => {
+      scheduleTerminalFit(0)
+      scheduleTerminalFocus()
+    })
+  }, [isVisible])
 
   useEffect(() => {
     setTerminalState(externalState)

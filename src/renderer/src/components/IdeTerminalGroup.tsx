@@ -47,6 +47,7 @@ export function IdeTerminalGroup({
             windowsBuildNumber={windowsBuildNumber}
             onClose={onToggleCollapse}
             actionsTarget={displayId === 'ide-workspace' ? actionsTarget : null}
+            isVisible={displayId === 'ide-workspace'}
           />
         </div>
 

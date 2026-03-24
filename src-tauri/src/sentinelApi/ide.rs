@@ -5,25 +5,28 @@ impl SentinelManager {
             inner.project.clone()
         };
 
-        let project_path = match project.path.clone() {
-            Some(path) => PathBuf::from(path),
-            None => {
-                let state = IdeTerminalState::idle();
-                {
-                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                    inner.ide.record = None;
-                }
-                emit_event(app, EVENT_IDE_STATE, &state);
-                return Ok(state);
+        // If no project is open, return idle immediately
+        if project.path.is_none() {
+            let state = IdeTerminalState::idle();
+            {
+                let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                inner.ide.record = None;
             }
-        };
+            emit_event(app, EVENT_IDE_STATE, &state);
+            return Ok(state);
+        }
 
-        let (workspace_path, modified_paths) = self.ensure_ide_workspace(app, &project)?;
-        let workspace_path_string = path_to_string(&workspace_path);
+        // Check if we can reuse the existing terminal quickly without copying anything
+        let project_root_str = project.path.clone().unwrap();
+        let project_root_path = PathBuf::from(&project_root_str);
         let should_reuse = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(record) = inner.ide.record.as_ref() {
-                record.state.workspace_path.as_deref() == Some(workspace_path_string.as_str())
+            if let (Some(record), Some(workspace_project_root), Some(_sandbox_state)) = (
+                inner.ide.record.as_ref(),
+                inner.ide.workspace_project_root.as_ref(),
+                inner.ide.sandbox_state.as_ref(),
+            ) {
+                workspace_project_root == &project_root_path
                     && !matches!(record.state.status, IdeStatus::Closed | IdeStatus::Error)
             } else {
                 false
@@ -42,14 +45,60 @@ impl SentinelManager {
             );
         }
 
+        // Return a Staring state immediately to unblock the frontend IPC call.
+        // The expensive workspace copy + PTY spawn happens in a background thread.
+        let starting_state = IdeTerminalState {
+            status: IdeStatus::Starting,
+            cwd: Some(project_root_str.clone()),
+            workspace_path: None,
+            shell: "powershell.exe".to_string(),
+            pid: None,
+            created_at: Some(now_millis()),
+            exit_code: None,
+            error: None,
+            modified_paths: Vec::new(),
+        };
+        emit_event(app, EVENT_IDE_STATE, &starting_state);
+
+        let manager = self.clone();
+        let app_handle = app.clone();
+        thread::spawn(move || {
+            if let Err(err) = manager.start_ide_terminal_background(&app_handle, project) {
+                eprintln!("[sentinel] IDE terminal background init error: {}", err);
+                let error_state = IdeTerminalState {
+                    status: IdeStatus::Error,
+                    cwd: Some(project_root_str),
+                    workspace_path: None,
+                    shell: "powershell.exe".to_string(),
+                    pid: None,
+                    created_at: Some(now_millis()),
+                    exit_code: None,
+                    error: Some(err),
+                    modified_paths: Vec::new(),
+                };
+                emit_event(&app_handle, EVENT_IDE_STATE, &error_state);
+            }
+        });
+
+        Ok(starting_state)
+    }
+
+    fn start_ide_terminal_background(self: &Arc<Self>, app: &AppHandle, project: ProjectState) -> Result<(), String> {
+        let project_path = project.path.clone()
+            .ok_or_else(|| "Project root is unavailable.".to_string())?;
+        let project_root = PathBuf::from(&project_path);
+
         self.close_ide_terminal(app)?;
+
+        let (workspace_path, modified_paths) = self.ensure_ide_workspace(app, &project)?;
+        let workspace_path_string = path_to_string(&workspace_path);
 
         let handles = self.spawn_ide_terminal(
             app.clone(),
             workspace_path.clone(),
             120,
             28,
-            project_path,
+            project_root,
         )?;
         let state = IdeTerminalState {
             status: IdeStatus::Starting,
@@ -77,7 +126,7 @@ impl SentinelManager {
         }
 
         emit_event(app, EVENT_IDE_STATE, &state);
-        Ok(state)
+        Ok(())
     }
 
     pub fn send_ide_terminal_input(self: &Arc<Self>, app: &AppHandle, data: &str) -> Result<(), String> {
