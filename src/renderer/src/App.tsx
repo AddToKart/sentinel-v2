@@ -276,6 +276,13 @@ export default function App(): JSX.Element {
   }, [globalMode])
 
   useEffect(() => {
+    if (project.path) {
+      setSidebarCollapsed(false)
+      sidebarPanelRef.current?.expand()
+    }
+  }, [project.path])
+
+  useEffect(() => {
     if (activeTabId === 'dashboard') {
       return
     }

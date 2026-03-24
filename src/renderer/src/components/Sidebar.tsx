@@ -335,6 +335,7 @@ export function Sidebar({
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showChangedOnly, setShowChangedOnly] = useState(false)
+  const [workspaceSectionOpen, setWorkspaceSectionOpen] = useState(true)
   const [projectSectionOpen, setProjectSectionOpen] = useState(true)
   const [modesSectionOpen, setModesSectionOpen] = useState(false)
   const [filesSectionOpen, setFilesSectionOpen] = useState(true)
@@ -353,6 +354,7 @@ export function Sidebar({
     setExpandedPaths(autoExpandedPaths)
     setSearchQuery('')
     setShowChangedOnly(false)
+    setWorkspaceSectionOpen(true)
     setProjectSectionOpen(true)
     setModesSectionOpen(false)
     setFilesSectionOpen(true)
@@ -455,11 +457,37 @@ export function Sidebar({
       <div className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-sentinel-accent/20 via-sentinel-ice/10 to-transparent" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.05] to-transparent opacity-70" />
 
-      <div className="shrink-0 border-b border-white/10 px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-sentinel-mist">Explorer</div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            className="inline-flex h-7 w-7 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+            onClick={onRefreshProject}
+            title="Refresh tree"
+            type="button"
+          >
+            <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            className="inline-flex h-7 w-7 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+            onClick={onToggleCollapse}
+            title="Collapse sidebar"
+            type="button"
+          >
+            <ChevronLeft className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      <SidebarSection
+        expanded={workspaceSectionOpen}
+        meta={project.path ? 'active' : 'idle'}
+        onToggle={() => setWorkspaceSectionOpen((current) => !current)}
+        title="Workspace"
+      >
+        <div className="space-y-4 pt-1">
           <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-sentinel-mist">Explorer</div>
-            <div className="mt-2 truncate text-sm font-semibold text-white">
+            <div className="truncate text-sm font-semibold text-white">
               {project.name || 'No project selected'}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-sentinel-mist">
@@ -478,52 +506,31 @@ export function Sidebar({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="grid grid-cols-2 gap-2">
             <button
-              className="inline-flex h-9 w-9 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
-              onClick={onRefreshProject}
-              title="Refresh tree"
+              className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+              onClick={onOpenProject}
               type="button"
             >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <FolderRoot className="h-3.5 w-3.5" />
+              Open
             </button>
+
             <button
-              className="inline-flex h-9 w-9 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
-              onClick={onToggleCollapse}
-              title="Collapse sidebar"
+              className={`inline-flex items-center justify-center gap-2 border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${
+                globalMode === 'ide'
+                  ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
+                  : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
+              }`}
+              onClick={() => onToggleGlobalMode(globalMode === 'multiplex' ? 'ide' : 'multiplex')}
               type="button"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <Sparkles className="h-3.5 w-3.5" />
+              {globalMode === 'ide' ? 'Agents' : 'IDE'}
             </button>
           </div>
         </div>
-      </div>
-
-      <div className="shrink-0 border-b border-white/10 px-3 py-2">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
-            onClick={onOpenProject}
-            type="button"
-          >
-            <FolderRoot className="h-3.5 w-3.5" />
-            Open
-          </button>
-
-          <button
-            className={`inline-flex items-center justify-center gap-2 border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${
-              globalMode === 'ide'
-                ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
-                : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
-            }`}
-            onClick={() => onToggleGlobalMode(globalMode === 'multiplex' ? 'ide' : 'multiplex')}
-            type="button"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            {globalMode === 'ide' ? 'Agents' : 'IDE'}
-          </button>
-        </div>
-      </div>
+      </SidebarSection>
 
       <SidebarSection
         expanded={projectSectionOpen}
@@ -630,34 +637,44 @@ export function Sidebar({
                 />
               </label>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2 mb-2">
                 <button
-                  className={`inline-flex h-9 items-center justify-center gap-2 border px-3 text-[10px] font-semibold uppercase tracking-[0.22em] transition ${showChangedOnly ? 'border-sentinel-accent/35 bg-sentinel-accent/12 text-white' : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'}`}
-                  onClick={() => setShowChangedOnly((current) => !current)}
-                  title="Show changed files only"
+                  className={`inline-flex h-8 items-center justify-center gap-2 border px-3 text-[10px] font-semibold uppercase tracking-[0.22em] transition ${!showChangedOnly ? 'border-sentinel-accent/35 bg-sentinel-accent/12 text-white' : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'}`}
+                  onClick={() => setShowChangedOnly(false)}
                   type="button"
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Changed
+                  <FolderRoot className="h-3 w-3" />
+                  Files
                 </button>
 
                 <button
-                  className="inline-flex h-9 items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+                  className={`inline-flex h-8 items-center justify-center gap-2 border px-3 text-[10px] font-semibold uppercase tracking-[0.22em] transition ${showChangedOnly ? 'border-sentinel-accent/35 bg-sentinel-accent/12 text-white' : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'}`}
+                  onClick={() => setShowChangedOnly(true)}
+                  type="button"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  Changed
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className="inline-flex h-7 items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
                   onClick={expandAllDirectories}
                   title="Expand all folders"
                   type="button"
                 >
-                  <FolderOpen className="h-3.5 w-3.5" />
+                  <FolderOpen className="h-3 w-3" />
                   Expand
                 </button>
 
                 <button
-                  className="inline-flex h-9 items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+                  className="inline-flex h-7 items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-sentinel-mist transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
                   onClick={collapseDirectories}
                   title="Collapse folders"
                   type="button"
                 >
-                  <Folder className="h-3.5 w-3.5" />
+                  <Folder className="h-3 w-3" />
                   Reset
                 </button>
               </div>
