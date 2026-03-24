@@ -30,9 +30,9 @@ impl SentinelManager {
     }
 
     fn refresh_project_snapshot(&self, app: &AppHandle) -> Result<ProjectState, String> {
-        let current_project = {
+        let (active_workspace_id, current_project) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.project.clone()
+            (inner.active_workspace_id.clone(), inner.project.clone())
         };
 
         let Some(project_path) = current_project.path.as_deref() else {
@@ -44,9 +44,13 @@ impl SentinelManager {
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project = next_project.clone();
+            sync_active_project_to_workspace(&mut inner);
             update_workspace_summary(&mut inner);
         }
 
+        if let Some(active_workspace_id) = active_workspace_id {
+            self.emit_workspace_updated(app, &active_workspace_id);
+        }
         self.emit_project_state(app);
         self.emit_workspace_state(app);
         Ok(next_project)

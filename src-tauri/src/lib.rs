@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use models::{
     BootstrapPayload, CreateSessionInput, IdeTerminalState, ProjectState, SessionApplyResult,
-    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, TabSummary,
+    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, TabSummary, WorkspaceContext,
     WorkspacePreferences,
 };
 use sentinel::SentinelManager;
@@ -24,6 +24,67 @@ fn load_project(
     candidate_path: String,
 ) -> Result<ProjectState, String> {
     state.load_project(&app, candidate_path)
+}
+
+#[tauri::command]
+fn create_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    candidate_path: String,
+    name: Option<String>,
+) -> Result<WorkspaceContext, String> {
+    state.create_workspace(&app, candidate_path, name)
+}
+
+#[tauri::command]
+fn list_workspaces(
+    state: State<'_, Arc<SentinelManager>>,
+) -> Result<Vec<WorkspaceContext>, String> {
+    Ok(state.list_workspaces())
+}
+
+#[tauri::command]
+fn switch_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<WorkspaceContext, String> {
+    state.switch_workspace(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn close_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    close_sessions: bool,
+) -> Result<(), String> {
+    state.close_workspace(&app, &workspace_id, close_sessions)
+}
+
+#[tauri::command]
+fn stop_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<(), String> {
+    state.stop_workspace(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn pause_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<(), String> {
+    state.pause_workspace(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn get_active_workspace(
+    state: State<'_, Arc<SentinelManager>>,
+) -> Result<Option<WorkspaceContext>, String> {
+    Ok(state.get_active_workspace())
 }
 
 #[tauri::command]
@@ -274,6 +335,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             load_project,
+            create_workspace,
+            list_workspaces,
+            switch_workspace,
+            close_workspace,
+            stop_workspace,
+            pause_workspace,
+            get_active_workspace,
             refresh_project,
             set_default_session_strategy,
             create_session,

@@ -10,6 +10,7 @@ import { IdeTerminalGroup } from './components/IdeTerminalGroup'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
 import { WorkspaceTabs } from './components/WorkspaceTabs'
+import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
 import { StandaloneTerminalTile } from './components/StandaloneTerminalTile'
 import { getErrorMessage } from './error-utils'
 import { clearIdeTerminalOutput, clearSessionOutput } from './terminal-stream'
@@ -29,6 +30,7 @@ import type {
   SessionSummary,
   SessionWorkspaceStrategy,
   TabSummary,
+  WorkspaceContext,
   WorkspaceSummary
 } from '@shared/types'
 
@@ -42,6 +44,11 @@ const emptyProject = (): ProjectState => ({
 
 const defaultSummary = (): WorkspaceSummary => ({
   activeSessions: 0,
+  activeWorkspaceSessionCount: 0,
+  activeWorkspaceTabCount: 0,
+  workspaceCount: 0,
+  totalSessions: 0,
+  totalTabs: 0,
   totalCpuPercent: 0,
   totalMemoryMb: 0,
   totalProcesses: 0,
@@ -67,8 +74,31 @@ function missingBridgeMessage(): string {
   return 'Sentinel desktop bridge is unavailable. Run this UI through the Tauri app, not a plain browser tab.'
 }
 
+function sortWorkspaces(workspaces: WorkspaceContext[]): WorkspaceContext[] {
+  return [...workspaces].sort((left, right) => {
+    if (left.lastActiveAt !== right.lastActiveAt) {
+      return right.lastActiveAt - left.lastActiveAt
+    }
+
+    return left.name.localeCompare(right.name)
+  })
+}
+
+function upsertWorkspace(
+  current: WorkspaceContext[],
+  workspace: WorkspaceContext
+): WorkspaceContext[] {
+  const next = current.some((existing) => existing.id === workspace.id)
+    ? current.map((existing) => (existing.id === workspace.id ? workspace : existing))
+    : [...current, workspace]
+
+  return sortWorkspaces(next)
+}
+
 export default function App(): JSX.Element {
   const [project, setProject] = useState<ProjectState>(emptyProject())
+  const [workspaces, setWorkspaces] = useState<WorkspaceContext[]>([])
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary>(defaultSummary())
   const [sessionHistories, setSessionHistories] = useState<Record<string, SessionCommandEntry[]>>({})
@@ -92,8 +122,6 @@ export default function App(): JSX.Element {
   // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [ideTabIds, setIdeTabIds] = useState<string[]>([])
-  const [agentTerminalCounter, setAgentTerminalCounter] = useState(0)
-  const [ideTerminalCounter, setIdeTerminalCounter] = useState(0)
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
@@ -103,7 +131,16 @@ export default function App(): JSX.Element {
   const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
   const fitTimerRef = useRef<number | null>(null)
+  const workspacesRef = useRef<WorkspaceContext[]>([])
   const bridgeAvailable = Boolean(getSentinelBridge())
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null
+  const visibleSessions = activeWorkspaceId
+    ? sessions.filter((session) => session.workspaceId === activeWorkspaceId)
+    : []
+  const visibleTabs = activeWorkspaceId
+    ? tabs.filter((tab) => tab.workspaceId === activeWorkspaceId)
+    : []
 
   function requestTerminalFit(delay = 140) {
     if (fitTimerRef.current) {
@@ -117,6 +154,10 @@ export default function App(): JSX.Element {
   }
 
   // Bootstrap
+  useEffect(() => {
+    workspacesRef.current = workspaces
+  }, [workspaces])
+
   useEffect(() => {
     let disposed = false
     const sentinel = getSentinelBridge()
@@ -138,8 +179,35 @@ export default function App(): JSX.Element {
       }),
       sentinelBridge.onProjectState(setProject),
       sentinelBridge.onWorkspaceState(setWorkspaceSummary),
+      sentinelBridge.onWorkspaceCreated((workspace) => {
+        setWorkspaces((current) => upsertWorkspace(current, workspace))
+        setActiveWorkspaceId(workspace.id)
+        setDefaultSessionStrategy(workspace.defaultSessionStrategy)
+      }),
+      sentinelBridge.onWorkspaceUpdated((workspace) => {
+        setWorkspaces((current) => upsertWorkspace(current, workspace))
+      }),
+      sentinelBridge.onWorkspaceSwitched((workspace) => {
+        setWorkspaces((current) => upsertWorkspace(current, workspace))
+        setActiveWorkspaceId(workspace.id)
+        setProject(workspace.project)
+        setDefaultSessionStrategy(workspace.defaultSessionStrategy)
+        setSelectedFile(null)
+        setMaximizedSessionId(null)
+      }),
+      sentinelBridge.onWorkspaceRemoved((payload) => {
+        setActiveWorkspaceId((current) =>
+          current === payload.workspaceId ? null : current
+        )
+        setWorkspaces((current) =>
+          current.filter((workspace) => workspace.id !== payload.workspaceId)
+        )
+      }),
       sentinelBridge.onSessionState((session) => {
         setSessions((cur) => {
+          const workspaceExists = workspacesRef.current.some(
+            (workspace) => workspace.id === session.workspaceId
+          )
           const i = cur.findIndex((s) => s.id === session.id)
           if (i >= 0) {
             if (session.status === 'closed') {
@@ -150,6 +218,9 @@ export default function App(): JSX.Element {
             return n
           }
           if (session.status === 'closed') {
+            return cur
+          }
+          if (!workspaceExists) {
             return cur
           }
           return [...cur, session]
@@ -175,6 +246,9 @@ export default function App(): JSX.Element {
       sentinelBridge.onIdeTerminalState(setIdeTerminalState),
       sentinelBridge.onTabState((update) => {
         setTabs((cur) => {
+          const workspaceExists = workspacesRef.current.some(
+            (workspace) => workspace.id === update.workspaceId
+          )
           const existing = cur.find((t) => t.id === update.tabId)
           if (existing) {
             if (update.status === 'closed') {
@@ -191,6 +265,9 @@ export default function App(): JSX.Element {
                   }
                 : t
             )
+          }
+          if (!workspaceExists || update.status === 'closed') {
+            return cur
           }
           return cur
         })
@@ -213,6 +290,8 @@ export default function App(): JSX.Element {
         const payload = await sentinelBridge.bootstrap()
         if (disposed) return
         setProject(payload.project)
+        setWorkspaces(sortWorkspaces(payload.workspaces))
+        setActiveWorkspaceId(payload.activeWorkspaceId ?? null)
         setSessions(payload.sessions)
         setWorkspaceSummary(payload.summary)
         setActivityLog(payload.activityLog)
@@ -274,7 +353,7 @@ export default function App(): JSX.Element {
   // Trigger a re-fit when sidebar, console, or active tab changes
   useEffect(() => {
     requestTerminalFit(120)
-  }, [sidebarCollapsed, consoleOpen, sessions.length, maximizedSessionId, activeTabId])
+  }, [sidebarCollapsed, consoleOpen, visibleSessions.length, maximizedSessionId, activeTabId])
 
   useEffect(() => {
     if (globalMode === 'ide') {
@@ -294,10 +373,52 @@ export default function App(): JSX.Element {
       return
     }
 
-    if (!tabs.some((tab) => tab.id === activeTabId)) {
-      setActiveTabId(tabs[0]?.id ?? 'dashboard')
+    if (!visibleTabs.some((tab) => tab.id === activeTabId)) {
+      setActiveTabId(visibleTabs[0]?.id ?? 'dashboard')
     }
-  }, [activeTabId, tabs])
+  }, [activeTabId, visibleTabs])
+
+  useEffect(() => {
+    if (activeWorkspace) {
+      setDefaultSessionStrategy(activeWorkspace.defaultSessionStrategy)
+      return
+    }
+
+    setDefaultSessionStrategy('sandbox-copy')
+  }, [activeWorkspace])
+
+  useEffect(() => {
+    setIdeTabIds((current) => current.filter((tabId) => tabs.some((tab) => tab.id === tabId)))
+  }, [tabs])
+
+  useEffect(() => {
+    const activeSessionIds = new Set(sessions.map((session) => session.id))
+
+    setSessionHistories((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([sessionId]) => activeSessionIds.has(sessionId))
+      )
+    )
+    setSessionDiffs((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([sessionId]) => activeSessionIds.has(sessionId))
+      )
+    )
+  }, [sessions])
+
+  useEffect(() => {
+    if (activeIdeTerminalId === 'ide-workspace') {
+      return
+    }
+
+    const hasVisibleIdeTab = visibleTabs.some(
+      (tab) => ideTabIds.includes(tab.id) && tab.id === activeIdeTerminalId
+    )
+
+    if (!hasVisibleIdeTab) {
+      setActiveIdeTerminalId('ide-workspace')
+    }
+  }, [activeIdeTerminalId, ideTabIds, visibleTabs])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -376,8 +497,30 @@ export default function App(): JSX.Element {
     finally { setRefreshingProject(false) }
   }
 
+  async function handleSwitchWorkspace(workspaceId: string) {
+    if (workspaceId === activeWorkspaceId) {
+      return
+    }
+
+    const sentinel = getSentinelBridge()
+    if (!sentinel) {
+      setErrorMessage(missingBridgeMessage())
+      return
+    }
+
+    try {
+      await sentinel.switchWorkspace(workspaceId)
+      setActiveTabId('dashboard')
+      setSelectedFile(null)
+    } catch (error) {
+      setErrorMessage(`Failed to switch workspace: ${getErrorMessage(error)}`)
+    }
+  }
+
+
+
   async function handleCreateSession() {
-    if (!project.path) return
+    if (!activeWorkspace || !project.path) return
     const sentinel = getSentinelBridge()
     if (!sentinel) {
       setErrorMessage(missingBridgeMessage())
@@ -429,6 +572,7 @@ export default function App(): JSX.Element {
   }
 
   async function handleCreateStandaloneTerminal() {
+    if (!activeWorkspace) return
     const sentinel = getSentinelBridge()
     if (!sentinel) {
       setErrorMessage(missingBridgeMessage())
@@ -436,11 +580,7 @@ export default function App(): JSX.Element {
     }
 
     try {
-      // Default terminal size - will be resized by the component
-      const nextCount = agentTerminalCounter + 1
-      const label = `Terminal ${nextCount}`
-      const newTab = await sentinel.createStandaloneTerminal(undefined, label, 80, 24)
-      setAgentTerminalCounter(nextCount)
+      const newTab = await sentinel.createStandaloneTerminal(undefined, undefined, 80, 24)
       setTabs((cur) => [...cur, newTab])
       setActiveTabId(newTab.id)
     } catch (error) {
@@ -500,11 +640,11 @@ export default function App(): JSX.Element {
     { id: 'multiplex-mode', label: 'Switch to Multiplex Mode', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setGlobalMode('multiplex') },
   ]
 
-  const hasProject = Boolean(project.path)
+  const hasProject = Boolean(project.path) && Boolean(activeWorkspace)
   const overlayFiles = buildWorkspaceOverlayFiles({
     projectPath: project.path,
     ideTerminalState,
-    sessions,
+    sessions: visibleSessions,
     sessionDiffs,
     globalMode,
     maximizedSessionId
@@ -518,7 +658,7 @@ export default function App(): JSX.Element {
   )
   const activeStandaloneTab =
     activeTabId !== 'dashboard'
-      ? tabs.find((tab) => tab.id === activeTabId) ?? null
+      ? visibleTabs.find((tab) => tab.id === activeTabId) ?? null
       : null
 
   const multiplexContent = !hasProject ? (
@@ -535,7 +675,7 @@ export default function App(): JSX.Element {
         </button>
       </div>
     </div>
-  ) : sessions.length === 0 ? (
+  ) : visibleSessions.length === 0 ? (
     <div className="flex h-full items-center justify-center text-center text-sentinel-mist">
       <div>
         <TerminalSquare className="mx-auto mb-4 h-10 w-10 opacity-30" />
@@ -551,7 +691,7 @@ export default function App(): JSX.Element {
         maximizedSessionId={maximizedSessionId}
         onClose={handleCloseSession}
         onToggleMaximize={(id) => setMaximizedSessionId((c) => c === id ? null : id)}
-        sessions={sessions}
+        sessions={visibleSessions}
         windowsBuildNumber={windowsBuildNumber}
       />
     </Suspense>
@@ -590,20 +730,22 @@ export default function App(): JSX.Element {
           windowsBuildNumber={windowsBuildNumber}
           fitNonce={fitNonce}
           ideTerminalState={ideTerminalState}
-          tabs={tabs.filter(t => ideTabIds.includes(t.id))}
+          tabs={visibleTabs.filter((tab) => ideTabIds.includes(tab.id))}
           activeTerminalId={activeIdeTerminalId}
           onSelectTerminal={setActiveIdeTerminalId}
-          onCreateTerminal={async () => {
-            const sentinel = getSentinelBridge()
-            if (!sentinel) return
-            try {
-              const nextCount = ideTerminalCounter + 1
-              const label = `Terminal ${nextCount}`
-              const newTab = await sentinel.createStandaloneTerminal(ideTerminalState?.workspacePath, label, 80, 24)
-              setIdeTerminalCounter(nextCount)
-              setIdeTabIds((cur) => [...cur, newTab.id])
-              setTabs((cur) => [...cur, newTab])
-              setActiveIdeTerminalId(newTab.id)
+            onCreateTerminal={async () => {
+              const sentinel = getSentinelBridge()
+              if (!sentinel) return
+              try {
+                const newTab = await sentinel.createStandaloneTerminal(
+                  ideTerminalState?.workspacePath,
+                  undefined,
+                  80,
+                  24
+                )
+                setIdeTabIds((cur) => [...cur, newTab.id])
+                setTabs((cur) => [...cur, newTab])
+                setActiveIdeTerminalId(newTab.id)
             } catch (err) {
               setErrorMessage(getErrorMessage(err))
             }
@@ -654,63 +796,89 @@ export default function App(): JSX.Element {
        *  - Right: padding-only safe zone (≥140px) for Electron controls (never house buttons there)
        */}
       <header
-        className="shrink-0 relative flex items-center border-b border-white/10 bg-black/30 px-3 h-10"
+        className="relative z-20 flex h-11 shrink-0 items-center border-b border-white/10 bg-black/30 px-3"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        {/* LEFT CLUSTER — sidebar toggle + project  */}
         <div
-          className="flex items-center gap-3 min-w-0 z-10"
+          className="z-10 flex min-w-0 items-center gap-3 pr-3"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <button
-            className="shrink-0 inline-flex h-7 w-7 items-center justify-center text-sentinel-mist transition hover:text-white"
-            onClick={toggleSidebar}
-            title="Toggle sidebar"
-          >
-            <PanelLeft className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            <button
+              className="inline-flex h-7 w-7 items-center justify-center text-sentinel-mist transition hover:text-white"
+              onClick={toggleSidebar}
+              title="Toggle sidebar"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
 
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-semibold tracking-tight text-white/90 whitespace-nowrap">Sentinel</span>
-            {project.name && (
-              <div className="flex items-center gap-1.5 rounded border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-sentinel-mist truncate max-w-[220px]">
-                <GitBranch className="h-3 w-3 shrink-0" />
-                <span className="truncate">{project.name} · {project.branch}</span>
+            <span className="whitespace-nowrap text-sm font-semibold tracking-tight text-white/90">
+              Sentinel
+            </span>
+          </div>
+
+          <div className="min-w-0 flex-1 max-w-[480px]">
+            <WorkspaceSwitcher
+              activeWorkspaceId={activeWorkspaceId}
+              onCreateWorkspace={() => void handleOpenProject()}
+              onSwitchWorkspace={(workspaceId) => void handleSwitchWorkspace(workspaceId)}
+              onWorkspaceAction={(workspaceId, action) => {
+                const sentinel = getSentinelBridge()
+                if (!sentinel) return
+
+                if (action === 'delete') {
+                  sentinel.closeWorkspace(workspaceId, true).catch(console.error)
+                } else if (action === 'stop') {
+                  sentinel.stopWorkspace(workspaceId).catch(console.error)
+                } else if (action === 'pause') {
+                  sentinel.pauseWorkspace(workspaceId).catch(console.error)
+                }
+              }}
+              workspaces={workspaces}
+            />
+          </div>
+
+          {project.name && (
+            <div className="hidden min-w-0 items-center gap-1.5 border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-sentinel-mist xl:flex">
+              <GitBranch className="h-3 w-3 shrink-0" />
+              <span className="truncate max-w-[220px]">{project.name}</span>
+              {project.branch && <span className="text-sentinel-mist/55">·</span>}
+              {project.branch && <span className="truncate max-w-[140px]">{project.branch}</span>}
+            </div>
+          )}
+
+          {/* Action buttons — moved to left corner, away from native controls */}
+          {globalMode !== 'ide' && (
+            <div 
+              className="ml-4 flex shrink-0 items-center gap-2" 
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            >
+              <div className="flex items-center rounded-md border border-white/10 bg-black/40 p-0.5 shadow-sm">
+                <button
+                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[11px] font-semibold text-sentinel-mist transition-colors hover:bg-white/[0.08] hover:text-white"
+                  onClick={() => void handleCreateStandaloneTerminal()}
+                  title="New Terminal"
+                >
+                  <TerminalSquare className="h-3.5 w-3.5 text-white/55" />
+                  <span className="hidden xl:inline">New Terminal</span>
+                </button>
+                
+                <div className="mx-0.5 h-3.5 w-px bg-white/10" />
+                
+                <button
+                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[11px] font-semibold text-sentinel-accent transition-colors hover:bg-sentinel-accent/20 disabled:opacity-40"
+                  disabled={!hasProject}
+                  onClick={() => void handleCreateSession()}
+                  title="New Agent"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span className="hidden xl:inline">New Agent</span>
+                </button>
               </div>
-            )}
-          </div>
-
-          {/* Action buttons — in safe left zone */}
-          <div className="flex items-center gap-1.5 ml-2">
-            {/* New Terminal button - positioned left of New Agent to clear native window controls */}
-            <button
-              className="inline-flex h-7 items-center gap-1.5 border border-white/10 bg-white/[0.04] px-3 text-[11px] font-semibold text-sentinel-mist transition hover:bg-white/[0.08] hover:text-white"
-              onClick={() => void handleCreateStandaloneTerminal()}
-              title="New Terminal"
-            >
-              <TerminalSquare className="h-3 w-3" />
-              <span className="hidden sm:inline">New Terminal</span>
-            </button>
-            <button
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-sentinel-accent/30 bg-sentinel-accent/10 px-3 text-[11px] font-semibold text-sentinel-glow transition hover:bg-sentinel-accent/20 disabled:opacity-40"
-              disabled={!hasProject}
-              onClick={() => void handleCreateSession()}
-            >
-              <Plus className="h-3 w-3" />
-              New Agent
-            </button>
-            <button
-              className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-sentinel-mist transition hover:text-white disabled:opacity-40"
-              disabled={!hasProject}
-              onClick={() => void handleRefreshProject()}
-              title="Refresh project tree"
-            >
-              <RefreshCw className={`h-3 w-3 ${refreshingProject ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* RIGHT SAFE ZONE — deliberately empty, ≥140px reserved for Electron window controls (min/max/close) */}
         <div className="ml-auto w-[140px] shrink-0" />
       </header>
 
@@ -743,6 +911,18 @@ export default function App(): JSX.Element {
               onFileSelect={(file) => { setSelectedFile(file); setGlobalMode('ide') }}
               globalMode={globalMode}
               onToggleGlobalMode={setGlobalMode}
+              onWorkspaceAction={(action) => {
+                const sentinel = getSentinelBridge()
+                if (!sentinel || !activeWorkspaceId) return
+
+                if (action === 'delete') {
+                  sentinel.closeWorkspace(activeWorkspaceId, true).catch(console.error)
+                } else if (action === 'stop') {
+                  sentinel.stopWorkspace(activeWorkspaceId).catch(console.error)
+                } else if (action === 'pause') {
+                  sentinel.pauseWorkspace(activeWorkspaceId).catch(console.error)
+                }
+              }}
             />
           </Panel>
 
@@ -758,7 +938,7 @@ export default function App(): JSX.Element {
             {/* Tab Bar - Hidden in IDE mode to save vertical space */}
             {globalMode !== 'ide' && (
               <WorkspaceTabs
-                tabs={tabs.filter((t) => !ideTabIds.includes(t.id))}
+                tabs={visibleTabs.filter((tab) => !ideTabIds.includes(tab.id))}
                 activeTabId={activeTabId}
                 onTabSelect={setActiveTabId}
                 onTabClose={handleCloseTab}

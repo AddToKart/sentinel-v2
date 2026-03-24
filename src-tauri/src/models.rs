@@ -68,6 +68,7 @@ pub struct ProcessMetrics {
 #[serde(rename_all = "camelCase")]
 pub struct SessionMetricsUpdate {
     pub session_id: String,
+    pub workspace_id: String,
     pub pid: Option<u32>,
     pub process_ids: Vec<u32>,
     pub metrics: ProcessMetrics,
@@ -101,6 +102,7 @@ pub struct ProjectState {
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     pub id: String,
+    pub workspace_id: String,
     pub label: String,
     pub project_root: String,
     pub cwd: String,
@@ -127,11 +129,20 @@ pub struct SessionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSummary {
     pub active_sessions: usize,
+    pub active_workspace_session_count: usize,
+    pub active_workspace_tab_count: usize,
+    pub workspace_count: usize,
+    pub total_sessions: usize,
+    pub total_tabs: usize,
     pub total_cpu_percent: f64,
     pub total_memory_mb: f64,
     pub total_processes: u32,
     pub last_updated: i64,
     pub default_session_strategy: SessionWorkspaceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +177,7 @@ pub struct SessionCommandEntry {
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryUpdate {
     pub session_id: String,
+    pub workspace_id: String,
     pub entries: Vec<SessionCommandEntry>,
 }
 
@@ -173,6 +185,7 @@ pub struct SessionHistoryUpdate {
 #[serde(rename_all = "camelCase")]
 pub struct SessionDiffUpdate {
     pub session_id: String,
+    pub workspace_id: String,
     pub modified_paths: Vec<String>,
     pub updated_at: i64,
 }
@@ -215,6 +228,27 @@ pub struct SessionCommitResult {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspacePreferences {
     pub default_session_strategy: SessionWorkspaceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_workspace_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceContext {
+    pub id: String,
+    pub name: String,
+    pub project: ProjectState,
+    pub session_ids: Vec<String>,
+    pub tab_ids: Vec<String>,
+    pub created_at: i64,
+    pub last_active_at: i64,
+    pub default_session_strategy: SessionWorkspaceStrategy,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemovedEvent {
+    pub workspace_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -241,6 +275,9 @@ pub struct IdeTerminalState {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapPayload {
     pub project: ProjectState,
+    pub workspaces: Vec<WorkspaceContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
     pub sessions: Vec<SessionSummary>,
     pub tabs: Vec<TabSummary>,
     pub summary: WorkspaceSummary,
@@ -290,6 +327,7 @@ impl Default for WorkspacePreferences {
     fn default() -> Self {
         Self {
             default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
+            last_workspace_id: None,
         }
     }
 }
@@ -298,6 +336,7 @@ impl Default for WorkspacePreferences {
 #[serde(rename_all = "camelCase")]
 pub struct TabSummary {
     pub id: String,
+    pub workspace_id: String,
     pub tab_type: TabType,
     pub label: String,
     pub status: TabStatus,
@@ -317,6 +356,7 @@ pub struct TabSummary {
 #[serde(rename_all = "camelCase")]
 pub struct TabMetricsUpdate {
     pub tab_id: String,
+    pub workspace_id: String,
     pub pid: Option<u32>,
     pub process_ids: Vec<u32>,
     pub metrics: ProcessMetrics,
@@ -334,6 +374,7 @@ pub struct TabOutputEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TabStateUpdate {
     pub tab_id: String,
+    pub workspace_id: String,
     pub status: TabStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
@@ -347,11 +388,18 @@ impl Default for WorkspaceSummary {
     fn default() -> Self {
         Self {
             active_sessions: 0,
+            active_workspace_session_count: 0,
+            active_workspace_tab_count: 0,
+            workspace_count: 0,
+            total_sessions: 0,
+            total_tabs: 0,
             total_cpu_percent: 0.0,
             total_memory_mb: 0.0,
             total_processes: 0,
             last_updated: 0,
             default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
+            active_workspace_id: None,
+            active_workspace_name: None,
             project_path: None,
             project_name: None,
             branch: None,

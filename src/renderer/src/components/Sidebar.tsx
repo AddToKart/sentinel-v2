@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ChevronDown,
   ChevronLeft,
@@ -12,9 +13,13 @@ import {
   FolderRoot,
   GitBranch,
   GitFork,
+  MoreHorizontal,
+  Pause,
   RefreshCw,
   Search,
-  Sparkles
+  Sparkles,
+  Square,
+  Trash2
 } from 'lucide-react'
 
 import type { ProjectState, SessionWorkspaceStrategy } from '@shared/types'
@@ -41,6 +46,7 @@ interface SidebarProps {
   onFileSelect: (file: SelectedFileEntry) => void
   globalMode: 'multiplex' | 'ide'
   onToggleGlobalMode: (mode: 'multiplex' | 'ide') => void
+  onWorkspaceAction: (action: 'delete' | 'stop' | 'pause') => void
 }
 
 interface FileContextMenuState {
@@ -190,21 +196,21 @@ function SidebarSection({
   children: ReactNode
 }): JSX.Element {
   return (
-    <section className="shrink-0 border-b border-white/10">
+    <section className="shrink-0 border-b border-black/40 bg-black/10">
       <button
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.24em] text-sentinel-mist transition hover:bg-white/[0.04] hover:text-white"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-sentinel-mist/70 transition hover:bg-white/[0.04] hover:text-white focus:outline-none focus:bg-white/[0.02]"
         onClick={onToggle}
         type="button"
       >
         <span>{title}</span>
         <span className="flex items-center gap-2">
-          {meta && <span className="text-[10px] tracking-[0.2em] text-sentinel-mist/70">{meta}</span>}
+          {meta && <span className="text-[10px] uppercase tracking-[0.2em] text-white/40">{meta}</span>}
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         </span>
       </button>
 
       <div className={`overflow-hidden transition-all duration-300 ease-out ${expanded ? 'max-h-[28rem] opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="px-3 pb-3">{children}</div>
+        <div className="px-4 pb-4">{children}</div>
       </div>
     </section>
   )
@@ -328,7 +334,8 @@ export function Sidebar({
   onToggleCollapse,
   onFileSelect,
   globalMode,
-  onToggleGlobalMode
+  onToggleGlobalMode,
+  onWorkspaceAction
 }: SidebarProps): JSX.Element {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null)
@@ -337,6 +344,8 @@ export function Sidebar({
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = useState(true)
   const [modesSectionOpen, setModesSectionOpen] = useState(false)
   const [filesSectionOpen, setFilesSectionOpen] = useState(true)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
 
   const displayTree = buildSidebarTree(project.path, project.tree, overlayFiles)
   const autoExpandedPaths = collectAutoExpandedPaths(project.path, project.tree, overlayFiles)
@@ -453,19 +462,19 @@ export function Sidebar({
       <div className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-sentinel-accent/20 via-sentinel-ice/10 to-transparent" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.05] to-transparent opacity-70" />
 
-      <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-sentinel-mist">Explorer</div>
-        <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center justify-between border-b border-black/40 bg-black/20 px-4 py-3">
+        <div className="text-[11px] font-bold uppercase tracking-[0.28em] text-white/50">Explorer</div>
+        <div className="flex shrink-0 items-center gap-1.5">
           <button
-            className="inline-flex h-7 w-7 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08] active:bg-white/10"
             onClick={onRefreshProject}
             title="Refresh tree"
             type="button"
           >
-            <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
           <button
-            className="inline-flex h-7 w-7 items-center justify-center border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-white transition hover:border-white/20 hover:bg-white/[0.08] active:bg-white/10"
             onClick={onToggleCollapse}
             title="Collapse sidebar"
             type="button"
@@ -477,53 +486,101 @@ export function Sidebar({
 
       <SidebarSection
         expanded={workspaceSectionOpen}
-        meta={project.path ? 'active' : 'idle'}
+        meta={project.path ? 'Active' : 'Idle'}
         onToggle={() => setWorkspaceSectionOpen((current) => !current)}
         title="Workspace"
       >
-        <div className="space-y-4 pt-1">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-white">
-              {project.name || 'No project selected'}
+        <div className="relative pt-1">
+          {/* Actionable Workspace Card */}
+          <button
+            onClick={onOpenProject}
+            className="group flex w-full flex-col text-left rounded-md border border-white/[0.08] bg-white/[0.02] p-3 transition-all hover:bg-white/[0.05] hover:border-white/20 active:bg-white/[0.08] focus:outline-none focus:ring-1 focus:ring-sentinel-accent/50"
+          >
+            <div className="flex w-full items-start justify-between min-w-0">
+              <div className="truncate text-sm font-semibold text-white group-hover:text-sentinel-ice transition-colors">
+                {project.name || 'Select a Repository'}
+              </div>
+              {project.path && (
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      setMenuPosition({ top: rect.bottom + 8, left: rect.right - 192 })
+                      setWorkspaceMenuOpen((v) => !v)
+                    }}
+                    className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                      workspaceMenuOpen ? 'bg-white/20 text-white' : 'text-sentinel-mist hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+
+                  {/* Three-dot dropdown menu */}
+                  {workspaceMenuOpen && createPortal(
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={(e) => { e.stopPropagation(); setWorkspaceMenuOpen(false) }}
+                      />
+                      <div 
+                        className="fixed z-50 w-48 rounded-md border border-white/10 bg-[#0b1219] p-1 shadow-2xl backdrop-blur-2xl"
+                        style={{
+                          top: menuPosition?.top,
+                          left: menuPosition?.left
+                        }}
+                      >
+                        <button
+                          className="flex justify-between w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-white transition hover:bg-white/10"
+                          onClick={(e) => { e.stopPropagation(); setWorkspaceMenuOpen(false); onWorkspaceAction('pause') }}
+                        >
+                          Pause Workspace
+                          <Pause className="h-3.5 w-3.5 text-sentinel-mist" />
+                        </button>
+                        <button
+                          className="flex justify-between w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-rose-300 transition hover:bg-rose-500/20"
+                          onClick={(e) => { e.stopPropagation(); setWorkspaceMenuOpen(false); onWorkspaceAction('stop') }}
+                        >
+                          Stop Workspace
+                          <Square className="h-3.5 w-3.5" />
+                        </button>
+                        <div className="my-1 h-px bg-white/10" />
+                        <button
+                          className="flex justify-between w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-red-500 transition hover:bg-red-500/20"
+                          onClick={(e) => { e.stopPropagation(); setWorkspaceMenuOpen(false); onWorkspaceAction('delete') }}
+                        >
+                          Delete Workspace
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </>,
+                    document.body
+                  )}
+                </div>
+              )}
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-sentinel-mist">
-              <span className="border border-white/10 bg-white/[0.04] px-2 py-1">
-                {project.path ? 'workspace' : 'idle'}
+
+            <div className="mt-2 text-xs text-sentinel-mist/60 truncate max-w-[200px]" title={project.path}>
+              {project.path || 'Click to browse for a project'}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] font-medium text-sentinel-mist">
+              <span className={`rounded-sm px-1.5 py-0.5 ${project.path ? 'bg-sentinel-accent/15 text-sentinel-accent' : 'bg-white/[0.04]'}`}>
+                {project.path ? 'active' : 'idle'}
               </span>
-              <span className="border border-white/10 bg-white/[0.04] px-2 py-1">
-                {modifiedFileCount} changed
-              </span>
+              {modifiedFileCount > 0 && (
+                <span className="rounded-sm bg-amber-500/15 text-amber-300 px-1.5 py-0.5 border border-amber-500/30">
+                  {modifiedFileCount} uncommitted
+                </span>
+              )}
               {project.branch && (
-                <span className="inline-flex items-center gap-1 border border-sentinel-ice/25 bg-sentinel-ice/10 px-2 py-1 text-sentinel-ice">
+                <span className="inline-flex items-center gap-1 rounded-sm border border-sentinel-ice/20 bg-sentinel-ice/10 px-1.5 py-0.5 text-sentinel-ice">
                   <GitBranch className="h-3 w-3" />
                   {project.branch}
                 </span>
               )}
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white transition hover:border-white/20 hover:bg-white/[0.08]"
-              onClick={onOpenProject}
-              type="button"
-            >
-              <FolderRoot className="h-3.5 w-3.5" />
-              Open
-            </button>
-
-            <button
-              className={`inline-flex items-center justify-center gap-2 border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${globalMode === 'ide'
-                  ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
-                  : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
-                }`}
-              onClick={() => onToggleGlobalMode(globalMode === 'multiplex' ? 'ide' : 'multiplex')}
-              type="button"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {globalMode === 'ide' ? 'Agents' : 'IDE'}
-            </button>
-          </div>
+          </button>
         </div>
       </SidebarSection>
 
@@ -586,15 +643,15 @@ export function Sidebar({
         </div>
       </SidebarSection>
 
-      <section className={`border-b border-white/10 ${filesSectionOpen ? 'min-h-0 flex flex-1 flex-col' : 'shrink-0'}`}>
+      <section className={`border-b border-black/40 bg-black/10 ${filesSectionOpen ? 'min-h-0 flex flex-1 flex-col' : 'shrink-0'}`}>
         <button
-          className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.24em] text-sentinel-mist transition hover:bg-white/[0.04] hover:text-white"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-sentinel-mist/70 transition hover:bg-white/[0.04] hover:text-white focus:outline-none focus:bg-white/[0.02]"
           onClick={() => setFilesSectionOpen((current) => !current)}
           type="button"
         >
           <span>Files</span>
           <span className="flex items-center gap-2">
-            <span className="text-[10px] tracking-[0.2em] text-sentinel-mist/70">{visibleFileCount}/{totalFileCount}</span>
+            <span className="text-[10px] tracking-[0.2em] text-white/40">{visibleFileCount}/{totalFileCount}</span>
             {filesSectionOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
           </span>
         </button>

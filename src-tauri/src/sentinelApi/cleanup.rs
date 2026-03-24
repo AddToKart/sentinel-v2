@@ -71,7 +71,9 @@ fn cleanup_session_workspace(
 }
 
 fn update_workspace_summary(inner: &mut SentinelState) {
-    let active_sessions = inner
+    sync_active_project_to_workspace(inner);
+
+    let active_session_records = inner
         .sessions
         .values()
         .filter(|record| {
@@ -82,28 +84,53 @@ fn update_workspace_summary(inner: &mut SentinelState) {
         })
         .collect::<Vec<_>>();
 
+    let active_workspace_id = inner.active_workspace_id.clone();
+    let active_workspace = active_workspace_clone(inner);
+
+    let active_workspace_session_count = active_workspace_id
+        .as_deref()
+        .map(|workspace_id| {
+            active_session_records
+                .iter()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .count()
+        })
+        .unwrap_or(0);
+
+    let active_workspace_tab_count = active_workspace
+        .as_ref()
+        .map(|workspace| workspace.tab_ids.len())
+        .unwrap_or(0);
+
     inner.workspace_summary = WorkspaceSummary {
-        active_sessions: active_sessions.len(),
+        active_sessions: active_session_records.len(),
+        active_workspace_session_count,
+        active_workspace_tab_count,
+        workspace_count: inner.workspaces.len(),
+        total_sessions: inner.sessions.len(),
+        total_tabs: inner.tabs.len(),
         total_cpu_percent: round(
-            active_sessions
+            active_session_records
                 .iter()
                 .map(|record| record.summary.metrics.cpu_percent)
                 .sum::<f64>(),
             1,
         ),
         total_memory_mb: round(
-            active_sessions
+            active_session_records
                 .iter()
                 .map(|record| record.summary.metrics.memory_mb)
                 .sum::<f64>(),
             1,
         ),
-        total_processes: active_sessions
+        total_processes: active_session_records
             .iter()
             .map(|record| record.summary.metrics.process_count)
             .sum(),
         last_updated: now_millis(),
         default_session_strategy: inner.preferences.default_session_strategy,
+        active_workspace_id,
+        active_workspace_name: active_workspace.as_ref().map(|workspace| workspace.name.clone()),
         project_path: inner.project.path.clone(),
         project_name: inner.project.name.clone(),
         branch: inner.project.branch.clone(),

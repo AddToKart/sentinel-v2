@@ -4,7 +4,8 @@ use crate::models::{
     SessionCommandEntry, SessionCommitResult, SessionDiffUpdate, SessionHistoryUpdate,
     SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
     SessionWorkspaceStrategy, TabMetricsUpdate, TabOutputEvent, TabStateUpdate, TabStatus,
-    TabSummary, TabType, WorkspacePreferences, WorkspaceSummary,
+    TabSummary, TabType, WorkspaceContext, WorkspacePreferences, WorkspaceRemovedEvent,
+    WorkspaceSummary,
 };
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Deserialize;
@@ -35,6 +36,10 @@ const EVENT_SESSION_METRICS: &str = "sentinel:session-metrics";
 const EVENT_SESSION_HISTORY: &str = "sentinel:session-history";
 const EVENT_SESSION_DIFF: &str = "sentinel:session-diff";
 const EVENT_WORKSPACE_STATE: &str = "sentinel:workspace-state";
+const EVENT_WORKSPACE_CREATED: &str = "sentinel:workspace-created";
+const EVENT_WORKSPACE_UPDATED: &str = "sentinel:workspace-updated";
+const EVENT_WORKSPACE_SWITCHED: &str = "sentinel:workspace-switched";
+const EVENT_WORKSPACE_REMOVED: &str = "sentinel:workspace-removed";
 const EVENT_ACTIVITY_LOG: &str = "sentinel:activity-log";
 const EVENT_TAB_OUTPUT: &str = "sentinel:tab-output";
 const EVENT_TAB_STATE: &str = "sentinel:tab-state";
@@ -52,6 +57,7 @@ struct FileFingerprint {
 struct SandboxWorkspaceState {
     baseline_hashes: BTreeMap<String, String>,
     scan_cache: BTreeMap<String, FileFingerprint>,
+    project_root: Option<String>, // For lazy hash computation
 }
 
 type SharedMaster = Arc<Mutex<Box<dyn MasterPty + Send>>>;
@@ -123,6 +129,8 @@ struct SentinelState {
     sessions: HashMap<String, SessionRecord>,
     tabs: HashMap<String, TabRecord>,
     ide: IdeRuntime,
+    workspaces: HashMap<String, WorkspaceContext>,
+    active_workspace_id: Option<String>,
     project: ProjectState,
     preferences: WorkspacePreferences,
     workspace_summary: WorkspaceSummary,
@@ -216,6 +224,7 @@ include!("utilities.rs");
 include!("sandbox.rs");
 include!("tracking.rs");
 include!("cleanup.rs");
+include!("workspaces.rs");
 include!("workspace.rs");
 include!("terminals.rs");
 include!("tabs.rs");

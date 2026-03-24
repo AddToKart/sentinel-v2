@@ -216,7 +216,8 @@ impl SentinelManager {
                                         0.0
                                     } else {
                                         let cpu_delta = snapshot.cpu_total_seconds - previous_cpu;
-                                        let elapsed = (sampled_at - previous_sampled_at) as f64 / 1000.0;
+                                        let elapsed =
+                                            (sampled_at - previous_sampled_at) as f64 / 1000.0;
                                         // Ensure elapsed is positive and non-zero
                                         if elapsed > 0.001 {
                                             round(cpu_delta.max(0.0) / elapsed * 100.0, 1)
@@ -275,25 +276,27 @@ impl SentinelManager {
     }
 
     fn refresh_ide_workspace_diffs(&self, app: &AppHandle) -> Result<(), String> {
-        let (workspace_path, sandbox_state) = {
+        let workspace_path = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            (
-                inner.ide.workspace_path.clone(),
-                inner.ide.sandbox_state.clone(),
-            )
+            inner.ide.workspace_path.clone()
         };
-        let (Some(workspace_path), Some(sandbox_state)) = (workspace_path, sandbox_state) else {
+        let Some(workspace_path) = workspace_path else {
             return Ok(());
         };
 
-        let (modified_paths, next_cache) =
-            refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
+        // Get mutable access to sandbox_state for lazy loading
+        let (modified_paths, _next_cache) = {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let sandbox_state = inner
+                .ide
+                .sandbox_state
+                .as_mut()
+                .ok_or("Sandbox state unavailable")?;
+            refresh_sandbox_workspace_diffs(&workspace_path, sandbox_state)?
+        };
+
         let should_emit = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.ide.sandbox_state = Some(SandboxWorkspaceState {
-                baseline_hashes: sandbox_state.baseline_hashes,
-                scan_cache: next_cache,
-            });
             if let Some(record) = inner.ide.record.as_mut() {
                 if record.state.modified_paths != modified_paths {
                     record.state.modified_paths = modified_paths;
@@ -353,6 +356,7 @@ impl SentinelManager {
                 .get(session_id)
                 .map(|record| SessionMetricsUpdate {
                     session_id: record.summary.id.clone(),
+                    workspace_id: record.summary.workspace_id.clone(),
                     pid: record.summary.pid,
                     process_ids: record.tracked_process_ids.clone(),
                     metrics: record.summary.metrics.clone(),
@@ -372,6 +376,7 @@ impl SentinelManager {
                 .get(session_id)
                 .map(|record| SessionHistoryUpdate {
                     session_id: record.summary.id.clone(),
+                    workspace_id: record.summary.workspace_id.clone(),
                     entries: record.history.clone(),
                 })
         };
@@ -388,6 +393,7 @@ impl SentinelManager {
                 .get(session_id)
                 .map(|record| SessionDiffUpdate {
                     session_id: record.summary.id.clone(),
+                    workspace_id: record.summary.workspace_id.clone(),
                     modified_paths: record.modified_paths.clone(),
                     updated_at: now_millis(),
                 })

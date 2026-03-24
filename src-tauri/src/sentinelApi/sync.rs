@@ -132,11 +132,7 @@ impl SentinelManager {
         })
     }
 
-    pub fn discard_session_changes(
-        &self,
-        app: &AppHandle,
-        session_id: &str,
-    ) -> Result<(), String> {
+    pub fn discard_session_changes(&self, app: &AppHandle, session_id: &str) -> Result<(), String> {
         let session_info = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
@@ -148,8 +144,16 @@ impl SentinelManager {
 
         let (summary, sandbox_state) = session_info;
         if summary.workspace_strategy == SessionWorkspaceStrategy::GitWorktree {
-            run_git_command(Some(app), Path::new(&summary.workspace_path), ["reset", "--hard"])?;
-            run_git_command(Some(app), Path::new(&summary.workspace_path), ["clean", "-fd"])?;
+            run_git_command(
+                Some(app),
+                Path::new(&summary.workspace_path),
+                ["reset", "--hard"],
+            )?;
+            run_git_command(
+                Some(app),
+                Path::new(&summary.workspace_path),
+                ["clean", "-fd"],
+            )?;
             self.refresh_runtime_state(app);
             return Ok(());
         }
@@ -224,11 +228,14 @@ impl SentinelManager {
             sandbox_state,
         ) {
             Ok(applied) => {
+                // Since we just applied changes, the hashes are already populated
+                // No need for lazy loading here
                 let refreshed = refresh_sandbox_workspace_diffs(
                     Path::new(&summary.workspace_path),
-                    &SandboxWorkspaceState {
+                    &mut SandboxWorkspaceState {
                         baseline_hashes: applied.next_baseline_hashes.clone(),
                         scan_cache: applied.next_cache.clone(),
+                        project_root: Some(summary.project_root.clone()),
                     },
                 )?;
                 let mut result = applied.result;
@@ -240,6 +247,7 @@ impl SentinelManager {
                         record.sandbox_state = Some(SandboxWorkspaceState {
                             baseline_hashes: applied.next_baseline_hashes.clone(),
                             scan_cache: refreshed.1.clone(),
+                            project_root: Some(summary.project_root.clone()),
                         });
                         record.modified_paths = refreshed.0.clone();
                     }
@@ -248,7 +256,11 @@ impl SentinelManager {
                 self.push_activity_log(
                     app,
                     "workspace",
-                    if result.conflicts.is_empty() { "completed" } else { "failed" },
+                    if result.conflicts.is_empty() {
+                        "completed"
+                    } else {
+                        "failed"
+                    },
                     "Sync sandbox changes to main project files",
                     summary.workspace_path.clone(),
                     Some(if result.conflicts.is_empty() {

@@ -8,6 +8,8 @@ impl SentinelManager {
                 sessions: HashMap::new(),
                 tabs: HashMap::new(),
                 ide: IdeRuntime::default(),
+                workspaces: HashMap::new(),
+                active_workspace_id: None,
                 project: ProjectState::default(),
                 preferences: WorkspacePreferences::default(),
                 workspace_summary: summary,
@@ -33,6 +35,7 @@ impl SentinelManager {
 
     pub fn bootstrap(&self) -> BootstrapPayload {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let workspaces = sorted_workspaces(&inner);
 
         let mut sessions = inner
             .sessions
@@ -46,6 +49,7 @@ impl SentinelManager {
             .values()
             .map(|record| SessionMetricsUpdate {
                 session_id: record.summary.id.clone(),
+                workspace_id: record.summary.workspace_id.clone(),
                 pid: record.summary.pid,
                 process_ids: record.tracked_process_ids.clone(),
                 metrics: record.summary.metrics.clone(),
@@ -59,6 +63,7 @@ impl SentinelManager {
             .values()
             .map(|record| SessionHistoryUpdate {
                 session_id: record.summary.id.clone(),
+                workspace_id: record.summary.workspace_id.clone(),
                 entries: record.history.clone(),
             })
             .collect::<Vec<_>>();
@@ -69,6 +74,7 @@ impl SentinelManager {
             .values()
             .map(|record| SessionDiffUpdate {
                 session_id: record.summary.id.clone(),
+                workspace_id: record.summary.workspace_id.clone(),
                 modified_paths: record.modified_paths.clone(),
                 updated_at: record.summary.created_at,
             })
@@ -86,6 +92,7 @@ impl SentinelManager {
             .values()
             .map(|record| TabMetricsUpdate {
                 tab_id: record.summary.id.clone(),
+                workspace_id: record.summary.workspace_id.clone(),
                 pid: record.summary.pid,
                 process_ids: record.tracked_process_ids.clone(),
                 metrics: record.summary.metrics.clone(),
@@ -95,6 +102,8 @@ impl SentinelManager {
 
         BootstrapPayload {
             project: inner.project.clone(),
+            workspaces,
+            active_workspace_id: inner.active_workspace_id.clone(),
             sessions,
             tabs,
             summary: inner.workspace_summary.clone(),
@@ -122,9 +131,18 @@ impl SentinelManager {
         let preferences = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.preferences.default_session_strategy = strategy;
+            if let Some(active_workspace_id) = inner.active_workspace_id.clone() {
+                if let Some(workspace) = inner.workspaces.get_mut(&active_workspace_id) {
+                    workspace.default_session_strategy = strategy;
+                    workspace.last_active_at = now_millis();
+                }
+            }
             update_workspace_summary(&mut inner);
             inner.preferences.clone()
         };
+        if let Some(workspace) = self.get_active_workspace() {
+            self.emit_workspace_updated(app, &workspace.id);
+        }
         self.emit_workspace_state(app);
         preferences
     }
@@ -134,28 +152,33 @@ impl SentinelManager {
         app: &AppHandle,
         candidate_path: String,
     ) -> Result<ProjectState, String> {
-        let next_project = inspect_project(Path::new(&candidate_path))?;
-        self.handle_project_changed(app, next_project.path.as_ref().map(PathBuf::from))?;
-
-        {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.project = next_project.clone();
-            update_workspace_summary(&mut inner);
-        }
-
-        self.emit_workspace_state(app);
-        self.emit_project_state(app);
-        Ok(next_project)
+        Ok(self.create_workspace(app, candidate_path, None)?.project)
     }
 
     pub fn refresh_project(&self, app: &AppHandle) -> Result<ProjectState, String> {
-        let project_path = {
+        let (active_workspace_id, project_path) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.project.path.clone()
+            (inner.active_workspace_id.clone(), inner.project.path.clone())
         };
 
         match project_path {
-            Some(path) => self.load_project(app, path),
+            Some(path) => {
+                let next_project = inspect_project(Path::new(&path))?;
+                let active_workspace_id = active_workspace_id
+                    .ok_or_else(|| "Workspace not found.".to_string())?;
+
+                {
+                    let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                    inner.project = next_project.clone();
+                    sync_active_project_to_workspace(&mut inner);
+                    update_workspace_summary(&mut inner);
+                }
+
+                self.emit_workspace_updated(app, &active_workspace_id);
+                self.emit_project_state(app);
+                self.emit_workspace_state(app);
+                Ok(next_project)
+            }
             None => Ok(self.bootstrap().project),
         }
     }

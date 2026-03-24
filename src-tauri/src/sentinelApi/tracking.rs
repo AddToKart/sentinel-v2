@@ -56,13 +56,14 @@ fn collect_workspace_diffs_for_record(record: &mut SessionRecord) -> Result<Vec<
     if record.summary.workspace_strategy == SessionWorkspaceStrategy::SandboxCopy {
         let sandbox_state = record
             .sandbox_state
-            .clone()
+            .as_mut()
             .ok_or_else(|| "Sandbox state is unavailable.".to_string())?;
         let (modified_paths, next_cache) =
-            refresh_sandbox_workspace_diffs(&workspace_path, &sandbox_state)?;
+            refresh_sandbox_workspace_diffs(&workspace_path, sandbox_state)?;
         record.sandbox_state = Some(SandboxWorkspaceState {
-            baseline_hashes: sandbox_state.baseline_hashes,
+            baseline_hashes: sandbox_state.baseline_hashes.clone(),
             scan_cache: next_cache,
+            project_root: sandbox_state.project_root.clone(),
         });
         return Ok(modified_paths);
     }

@@ -26,6 +26,7 @@ export function WorkspaceTabs({
 
   const dashboardTab: TabSummary = {
     id: 'dashboard',
+    workspaceId: 'dashboard',
     tabType: 'dashboard',
     label: 'Agents Dashboard',
     status: 'ready',

@@ -1,8 +1,15 @@
 impl SentinelManager {
     pub fn create_session(self: &Arc<Self>, app: &AppHandle, input: CreateSessionInput) -> Result<SessionSummary, String> {
-        let (project, session_count, preferences) = {
+        let (workspace_id, project, session_count, default_workspace_strategy) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            (inner.project.clone(), inner.sessions.len(), inner.preferences.clone())
+            let workspace = active_workspace_clone(&inner)
+                .ok_or_else(|| "Open a project workspace before starting an agent session.".to_string())?;
+            (
+                workspace.id,
+                workspace.project,
+                workspace.session_ids.len(),
+                workspace.default_session_strategy,
+            )
         };
 
         let project_path = project
@@ -12,7 +19,7 @@ impl SentinelManager {
 
         let workspace_strategy = input
             .workspace_strategy
-            .unwrap_or(preferences.default_session_strategy);
+            .unwrap_or(default_workspace_strategy);
         if workspace_strategy == SessionWorkspaceStrategy::GitWorktree && !project.is_git_repo {
             return Err(
                 "Git Worktree mode requires a Git repository. Use Sandbox Copy mode for plain folders."
@@ -58,6 +65,7 @@ impl SentinelManager {
 
         let summary = SessionSummary {
             id: session_id.clone(),
+            workspace_id: workspace_id.clone(),
             label,
             project_root: project_path,
             cwd: path_to_string(&workspace.workspace_path),
@@ -104,6 +112,10 @@ impl SentinelManager {
 
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(workspace) = inner.workspaces.get_mut(&workspace_id) {
+                workspace.session_ids.push(summary.id.clone());
+                workspace.last_active_at = now_millis();
+            }
             inner.sessions.insert(session_id, record);
             update_workspace_summary(&mut inner);
         }
@@ -112,6 +124,7 @@ impl SentinelManager {
         self.emit_session_metrics(app, &summary.id);
         self.emit_session_history(app, &summary.id);
         self.emit_session_diff(app, &summary.id);
+        self.emit_workspace_updated(app, &workspace_id);
         self.emit_workspace_state(app);
         Ok(summary)
     }
@@ -238,15 +251,20 @@ impl SentinelManager {
             sleep_duration_ms = (sleep_duration_ms * 2).min(max_sleep_ms);
         }
 
-        let removed = {
+        let removed_workspace_id = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let removed = inner.sessions.remove(&session_id).is_some();
-            if removed {
+            let workspace_id = inner
+                .sessions
+                .remove(&session_id)
+                .map(|record| record.summary.workspace_id);
+            if let Some(workspace_id) = workspace_id.as_deref() {
+                remove_session_from_workspace(&mut inner, workspace_id, &session_id);
                 update_workspace_summary(&mut inner);
             }
-            removed
+            workspace_id
         };
-        if removed {
+        if let Some(workspace_id) = removed_workspace_id {
+            self.emit_workspace_updated(&app, &workspace_id);
             self.emit_workspace_state(&app);
         }
     }

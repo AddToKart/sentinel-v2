@@ -23,7 +23,9 @@ import type {
   TabOutputEvent,
   TabStateUpdate,
   TabSummary,
+  WorkspaceContext,
   WorkspacePreferences,
+  WorkspaceRemovedEvent,
   WorkspaceSummary
 } from '@shared/types'
 
@@ -130,6 +132,27 @@ const api: SentinelApi = {
       await invokeCommand<ProjectState>('load_project', { candidatePath: selected })
     )
   },
+  createWorkspace(candidatePath: string, name?: string) {
+    return invokeCommand<WorkspaceContext>('create_workspace', { candidatePath, name })
+  },
+  listWorkspaces() {
+    return invokeCommand<WorkspaceContext[]>('list_workspaces')
+  },
+  switchWorkspace(workspaceId: string) {
+    return invokeCommand<WorkspaceContext>('switch_workspace', { workspaceId })
+  },
+  closeWorkspace(workspaceId: string, closeSessions: boolean) {
+    return invokeCommand<void>('close_workspace', { workspaceId, closeSessions })
+  },
+  stopWorkspace(workspaceId: string) {
+    return invokeCommand<void>('stop_workspace', { workspaceId })
+  },
+  pauseWorkspace(workspaceId: string) {
+    return invokeCommand<void>('pause_workspace', { workspaceId })
+  },
+  getActiveWorkspace() {
+    return invokeCommand<WorkspaceContext | null>('get_active_workspace')
+  },
   async refreshProject() {
     return rememberProject(await invokeCommand<ProjectState>('refresh_project'))
   },
@@ -222,6 +245,21 @@ const api: SentinelApi = {
   },
   onWorkspaceState(listener: (summary: WorkspaceSummary) => void) {
     return subscribe<WorkspaceSummary>('sentinel:workspace-state', listener)
+  },
+  onWorkspaceCreated(listener: (workspace: WorkspaceContext) => void) {
+    return subscribe<WorkspaceContext>('sentinel:workspace-created', listener)
+  },
+  onWorkspaceUpdated(listener: (workspace: WorkspaceContext) => void) {
+    return subscribe<WorkspaceContext>('sentinel:workspace-updated', listener)
+  },
+  onWorkspaceSwitched(listener: (workspace: WorkspaceContext) => void) {
+    return subscribe<WorkspaceContext>('sentinel:workspace-switched', (workspace) => {
+      listener(workspace)
+      rememberProject(workspace.project)
+    })
+  },
+  onWorkspaceRemoved(listener: (payload: WorkspaceRemovedEvent) => void) {
+    return subscribe<WorkspaceRemovedEvent>('sentinel:workspace-removed', listener)
   },
   onActivityLog(listener: (entry: ActivityLogEntry) => void) {
     return subscribe<ActivityLogEntry>('sentinel:activity-log', listener)

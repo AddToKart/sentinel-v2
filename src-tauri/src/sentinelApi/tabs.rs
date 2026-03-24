@@ -7,19 +7,20 @@ impl SentinelManager {
         cols: u16,
         rows: u16,
     ) -> Result<TabSummary, String> {
+        let (workspace_id, default_cwd, tab_count) = {
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let workspace = active_workspace_clone(&inner)
+                .ok_or_else(|| "Open a project workspace before starting a terminal.".to_string())?;
+            let default_cwd = workspace
+                .project
+                .path
+                .clone()
+                .ok_or_else(|| "Workspace project root is unavailable.".to_string())?;
+            (workspace.id, default_cwd, workspace.tab_ids.len())
+        };
         let tab_id = generate_id();
 
-        // Spawn terminal at requested directory or root
-        let root_dir = match cwd {
-            Some(path_str) => PathBuf::from(path_str),
-            None => {
-                if cfg!(windows) {
-                    PathBuf::from("C:\\")
-                } else {
-                    PathBuf::from("/")
-                }
-            }
-        };
+        let root_dir = PathBuf::from(cwd.unwrap_or(default_cwd));
 
         let handles = self.spawn_standalone_terminal(
             app.clone(),
@@ -32,8 +33,9 @@ impl SentinelManager {
         let now = now_millis();
         let summary = TabSummary {
             id: tab_id.clone(),
+            workspace_id: workspace_id.clone(),
             tab_type: TabType::Terminal,
-            label: label.unwrap_or_else(|| format!("Terminal {}", self.get_next_terminal_number())),
+            label: label.unwrap_or_else(|| format!("Terminal {}", tab_count + 1)),
             status: TabStatus::Starting,
             cwd: path_to_string(&root_dir),
             shell: "powershell.exe".to_string(),
@@ -59,7 +61,12 @@ impl SentinelManager {
 
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(workspace) = inner.workspaces.get_mut(&workspace_id) {
+                workspace.tab_ids.push(summary.id.clone());
+                workspace.last_active_at = now_millis();
+            }
             inner.tabs.insert(tab_id.clone(), record);
+            update_workspace_summary(&mut inner);
         }
 
         emit_event(
@@ -67,18 +74,21 @@ impl SentinelManager {
             EVENT_TAB_STATE,
             &TabStateUpdate {
                 tab_id: tab_id.clone(),
+                workspace_id: workspace_id.clone(),
                 status: TabStatus::Starting,
                 pid: handles.pid,
                 exit_code: None,
                 error: None,
             },
         );
+        self.emit_workspace_updated(app, &workspace_id);
+        self.emit_workspace_state(app);
 
         Ok(summary)
     }
 
     pub fn close_tab(self: &Arc<Self>, app: &AppHandle, tab_id: &str) -> Result<(), String> {
-        let (pid, killer, should_wait_for_shutdown) = {
+        let (pid, killer, should_wait_for_shutdown, workspace_id) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .tabs
@@ -93,7 +103,12 @@ impl SentinelManager {
             record.summary.status = TabStatus::Closing;
             record.summary.error = None;
 
-            (record.summary.pid, record.killer.clone(), true)
+            (
+                record.summary.pid,
+                record.killer.clone(),
+                true,
+                record.summary.workspace_id.clone(),
+            )
         };
 
         let _ = kill_process_tree(&killer);
@@ -104,6 +119,7 @@ impl SentinelManager {
             EVENT_TAB_STATE,
             &TabStateUpdate {
                 tab_id: tab_id.to_string(),
+                workspace_id,
                 status: TabStatus::Closing,
                 pid,
                 exit_code: None,
@@ -191,16 +207,6 @@ impl SentinelManager {
                 Err(e)
             }
         }
-    }
-
-    fn get_next_terminal_number(&self) -> usize {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner
-            .tabs
-            .values()
-            .filter(|r| r.summary.tab_type == TabType::Terminal)
-            .count()
-            + 1
     }
 
     fn spawn_standalone_terminal(
@@ -347,27 +353,31 @@ impl SentinelManager {
             }
         });
 
+        let workspace_id = record.summary.workspace_id.clone();
         let should_emit = !record.close_requested;
 
         let final_status = record.summary.status.clone();
 
         let state_update = TabStateUpdate {
             tab_id: tab_id.clone(),
+            workspace_id: workspace_id.clone(),
             status: final_status,
             pid: record.summary.pid,
             exit_code,
             error: record.summary.error.clone(),
         };
 
-        // Remove the tab while still holding the lock
         inner.tabs.remove(&tab_id);
+        remove_tab_from_workspace(&mut inner, &workspace_id, &tab_id);
+        update_workspace_summary(&mut inner);
 
-        // Drop the lock explicitly before emitting to avoid holding lock during I/O
         drop(inner);
 
         if should_emit {
             emit_event(&app, EVENT_TAB_STATE, &state_update);
         }
+        self.emit_workspace_updated(&app, &workspace_id);
+        self.emit_workspace_state(&app);
     }
 
     pub fn refresh_tab_metrics(&self, app: &AppHandle) {
@@ -387,7 +397,7 @@ impl SentinelManager {
     }
 
     fn sample_tab_metrics(&self, app: &AppHandle, tab_id: &str) {
-        let (pid, last_cpu, last_sampled) = {
+        let (pid, workspace_id, last_cpu, last_sampled) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.tabs.get(tab_id) else {
                 return;
@@ -398,7 +408,12 @@ impl SentinelManager {
                 None => return,
             };
 
-            (pid, record.last_cpu_total_seconds, record.last_sampled_at)
+            (
+                pid,
+                record.summary.workspace_id.clone(),
+                record.last_cpu_total_seconds,
+                record.last_sampled_at,
+            )
         };
 
         let snapshot = match capture_process_tree_snapshot(pid) {
@@ -445,6 +460,7 @@ impl SentinelManager {
             EVENT_TAB_METRICS,
             &TabMetricsUpdate {
                 tab_id: tab_id.to_string(),
+                workspace_id,
                 pid: Some(pid),
                 process_ids: snapshot.process_ids,
                 metrics,

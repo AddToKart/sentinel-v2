@@ -35,7 +35,7 @@ export function StatusBar({
     memoryMb: summary.totalMemoryMb,
     processCount: summary.totalProcesses
   }
-  const displayLabel = focusedTab ? focusedTab.label : 'Workspace Total'
+  const displayLabel = focusedTab ? focusedTab.label : (summary.activeWorkspaceName ?? 'Workspace Total')
   const displayPid = focusedTab?.pid
 
   if (collapsed) {
@@ -85,6 +85,10 @@ export function StatusBar({
             <span className="font-mono truncate max-w-[100px]">{summary.branch || 'None'}</span>
           </div>
           <div className="hidden lg:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 shadow-inner">
+            <Layers3 className="h-3 w-3 text-white" />
+            <span className="font-mono">{summary.workspaceCount} ws</span>
+          </div>
+          <div className="hidden lg:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 shadow-inner">
             <TerminalSquare className="h-3 w-3 text-sentinel-accent" />
             <span className="font-medium tracking-wide">
               {defaultSessionStrategy === 'sandbox-copy' ? 'SANDBOX' : 'WORKTREE'}
@@ -105,7 +109,15 @@ export function StatusBar({
           
           <div className="flex items-center gap-2 text-sentinel-mist bg-white/[0.03] border border-white/10 rounded-full px-3 py-1 shadow-inner">
             <Layers3 className="h-3.5 w-3.5 opacity-70" />
-            <span className="font-mono">{(focusedTab?.metrics?.processCount ?? summary.totalProcesses)} procs</span>
+            <span className="font-mono">
+              {focusedTab?.metrics?.processCount ?? summary.totalProcesses} procs
+            </span>
+          </div>
+          <div className="hidden md:flex items-center gap-2 text-sentinel-mist bg-white/[0.03] border border-white/10 rounded-full px-3 py-1 shadow-inner">
+            <TerminalSquare className="h-3.5 w-3.5 opacity-70" />
+            <span className="font-mono">
+              {summary.activeWorkspaceSessionCount}/{summary.totalSessions} sessions
+            </span>
           </div>
           <div className="flex items-center gap-2 text-sentinel-mist bg-white/[0.03] border border-white/10 rounded-full px-3 py-1 shadow-inner">
             <Clock3 className="h-3.5 w-3.5 opacity-70" />

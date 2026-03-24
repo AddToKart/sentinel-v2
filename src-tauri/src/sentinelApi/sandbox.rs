@@ -15,9 +15,17 @@ fn create_signature(metadata: &fs::Metadata) -> String {
     format!("{}:{}", metadata.len(), modified)
 }
 
-fn copy_project_tree(project_root: &Path, workspace_path: &Path, relative_root: Option<&Path>) -> Result<(), String> {
-    let source_root = relative_root.map(|value| project_root.join(value)).unwrap_or_else(|| project_root.to_path_buf());
-    let target_root = relative_root.map(|value| workspace_path.join(value)).unwrap_or_else(|| workspace_path.to_path_buf());
+fn copy_project_tree(
+    project_root: &Path,
+    workspace_path: &Path,
+    relative_root: Option<&Path>,
+) -> Result<(), String> {
+    let source_root = relative_root
+        .map(|value| project_root.join(value))
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let target_root = relative_root
+        .map(|value| workspace_path.join(value))
+        .unwrap_or_else(|| workspace_path.to_path_buf());
     fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
 
     for entry in fs::read_dir(&source_root).map_err(|error| error.to_string())? {
@@ -60,7 +68,11 @@ fn list_tracked_files(root_path: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-fn list_tracked_files_recursive(root_path: &Path, current_path: &Path, files: &mut Vec<String>) -> Result<(), String> {
+fn list_tracked_files_recursive(
+    root_path: &Path,
+    current_path: &Path,
+    files: &mut Vec<String>,
+) -> Result<(), String> {
     for entry in fs::read_dir(current_path).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
@@ -76,7 +88,9 @@ fn list_tracked_files_recursive(root_path: &Path, current_path: &Path, files: &m
         }
 
         if file_type.is_file() {
-            let relative_path = path.strip_prefix(root_path).map_err(|error| error.to_string())?;
+            let relative_path = path
+                .strip_prefix(root_path)
+                .map_err(|error| error.to_string())?;
             files.push(path_to_string(relative_path));
         }
     }
@@ -114,17 +128,39 @@ fn snapshot_workspace_files(
 }
 
 fn initialize_sandbox_repository(workspace_path: &Path) -> Result<(), String> {
-    let _ = run_command("git", &["init", "-b", "sentinel-sandbox"], Some(workspace_path))
-        .or_else(|_| run_command("git", &["init"], Some(workspace_path)))
-        .and_then(|_| run_command("git", &["checkout", "-B", "sentinel-sandbox"], Some(workspace_path)));
+    let _ = run_command(
+        "git",
+        &["init", "-b", "sentinel-sandbox"],
+        Some(workspace_path),
+    )
+    .or_else(|_| run_command("git", &["init"], Some(workspace_path)))
+    .and_then(|_| {
+        run_command(
+            "git",
+            &["checkout", "-B", "sentinel-sandbox"],
+            Some(workspace_path),
+        )
+    });
 
     let exclude_path = workspace_path.join(".git").join("info").join("exclude");
     if let Some(parent) = exclude_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let content = [
-        ".git", ".next", ".turbo", ".venv", "node_modules", "dist", "out", "build", "coverage",
-        "__pycache__", "venv", ".tox", ".yarn", ".pnpm-store",
+        ".git",
+        ".next",
+        ".turbo",
+        ".venv",
+        "node_modules",
+        "dist",
+        "out",
+        "build",
+        "coverage",
+        "__pycache__",
+        "venv",
+        ".tox",
+        ".yarn",
+        ".pnpm-store",
     ]
     .iter()
     .map(|entry| format!("{entry}/"))
@@ -132,16 +168,41 @@ fn initialize_sandbox_repository(workspace_path: &Path) -> Result<(), String> {
     .join("\n");
     fs::write(&exclude_path, format!("{content}\n")).map_err(|error| error.to_string())?;
 
-    let _ = run_command("git", &["config", "user.name", "Sentinel"], Some(workspace_path));
-    let _ = run_command("git", &["config", "user.email", "sentinel@local.invalid"], Some(workspace_path));
+    let _ = run_command(
+        "git",
+        &["config", "user.name", "Sentinel"],
+        Some(workspace_path),
+    );
+    let _ = run_command(
+        "git",
+        &["config", "user.email", "sentinel@local.invalid"],
+        Some(workspace_path),
+    );
     let _ = run_command("git", &["add", "-A"], Some(workspace_path));
-    let _ = run_command("git", &["commit", "-m", "Sentinel sandbox baseline"], Some(workspace_path))
-        .or_else(|_| run_command("git", &["commit", "--allow-empty", "-m", "Sentinel sandbox baseline"], Some(workspace_path)));
+    let _ = run_command(
+        "git",
+        &["commit", "-m", "Sentinel sandbox baseline"],
+        Some(workspace_path),
+    )
+    .or_else(|_| {
+        run_command(
+            "git",
+            &["commit", "--allow-empty", "-m", "Sentinel sandbox baseline"],
+            Some(workspace_path),
+        )
+    });
     Ok(())
 }
 
 fn ensure_shared_directories(project_root: &Path, workspace_path: &Path) -> Result<(), String> {
-    for directory_name in ["node_modules", ".venv", "venv", ".tox", ".yarn", ".pnpm-store"] {
+    for directory_name in [
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".yarn",
+        ".pnpm-store",
+    ] {
         let source_path = project_root.join(directory_name);
         let destination_path = workspace_path.join(directory_name);
         if !source_path.exists() {
@@ -192,33 +253,61 @@ fn collect_modified_paths(
         .into_iter()
         .filter(|relative_path| {
             baseline_hashes.get(relative_path)
-                != workspace_snapshot.get(relative_path).map(|fingerprint| &fingerprint.hash)
+                != workspace_snapshot
+                    .get(relative_path)
+                    .map(|fingerprint| &fingerprint.hash)
         })
         .collect::<Vec<_>>();
     modified.sort();
     modified
 }
 
-fn create_sandbox_workspace(project_root: &Path, workspace_path: &Path) -> Result<SandboxWorkspaceState, String> {
-    let baseline_hashes = snapshot_project_hashes(project_root)?;
+fn create_sandbox_workspace(
+    project_root: &Path,
+    workspace_path: &Path,
+) -> Result<SandboxWorkspaceState, String> {
+    // PERFORMANCE OPTIMIZATION: Skip expensive hash operations during creation
+    // They will be computed lazily when first needed for diff comparison
+
+    // Clean up any existing workspace
     let _ = fs::remove_dir_all(workspace_path);
     fs::create_dir_all(workspace_path).map_err(|error| error.to_string())?;
+
+    // Copy files (this is the unavoidable part, but we can optimize it)
     copy_project_tree(project_root, workspace_path, None)?;
+
+    // Initialize git repo (needed for change tracking, but can be optimized)
     let _ = initialize_sandbox_repository(workspace_path);
+
+    // Link shared directories (node_modules, etc.) instead of copying
     let _ = ensure_shared_directories(project_root, workspace_path);
-    let scan_cache = snapshot_workspace_files(workspace_path, None)?;
+
+    // PERFORMANCE OPTIMIZATION: Create empty hashes/cache initially
+    // They will be populated on first diff check
     Ok(SandboxWorkspaceState {
-        baseline_hashes,
-        scan_cache,
+        baseline_hashes: BTreeMap::new(),
+        scan_cache: BTreeMap::new(),
+        project_root: Some(path_to_string(project_root)),
     })
 }
 
 fn refresh_sandbox_workspace_diffs(
     workspace_path: &Path,
-    sandbox_state: &SandboxWorkspaceState,
+    sandbox_state: &mut SandboxWorkspaceState,
 ) -> Result<(Vec<String>, BTreeMap<String, FileFingerprint>), String> {
+    // PERFORMANCE: Lazily populate baseline hashes if empty (first time only)
+    if sandbox_state.baseline_hashes.is_empty() {
+        if let Some(ref project_root_str) = sandbox_state.project_root {
+            let project_root = Path::new(project_root_str);
+            sandbox_state.baseline_hashes = snapshot_project_hashes(project_root)?;
+        }
+    }
+
     let next_cache = snapshot_workspace_files(workspace_path, Some(&sandbox_state.scan_cache))?;
-    Ok((collect_modified_paths(&sandbox_state.baseline_hashes, &next_cache), next_cache))
+    Ok((
+        collect_modified_paths(&sandbox_state.baseline_hashes, &next_cache),
+        next_cache,
+    ))
 }
 
 fn apply_sandbox_workspace(
@@ -227,8 +316,10 @@ fn apply_sandbox_workspace(
     workspace_path: &Path,
     sandbox_state: SandboxWorkspaceState,
 ) -> Result<ApplySandboxOutcome, String> {
-    let workspace_snapshot = snapshot_workspace_files(workspace_path, Some(&sandbox_state.scan_cache))?;
-    let modified_paths = collect_modified_paths(&sandbox_state.baseline_hashes, &workspace_snapshot);
+    let workspace_snapshot =
+        snapshot_workspace_files(workspace_path, Some(&sandbox_state.scan_cache))?;
+    let modified_paths =
+        collect_modified_paths(&sandbox_state.baseline_hashes, &workspace_snapshot);
     let mut conflicts = Vec::new();
     let mut applied_paths = Vec::new();
     let mut next_baseline_hashes = sandbox_state.baseline_hashes.clone();
@@ -250,7 +341,10 @@ fn apply_sandbox_workspace(
             conflicts.push(SessionSyncConflict {
                 path: relative_path,
                 reason: "project-changed".to_string(),
-                detail: Some("The file changed in the main project after this sandbox session started.".to_string()),
+                detail: Some(
+                    "The file changed in the main project after this sandbox session started."
+                        .to_string(),
+                ),
             });
             continue;
         }
@@ -259,7 +353,8 @@ fn apply_sandbox_workspace(
             if let Some(parent) = project_file_path.parent() {
                 fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             }
-            fs::copy(&workspace_file_path, &project_file_path).map_err(|error| error.to_string())?;
+            fs::copy(&workspace_file_path, &project_file_path)
+                .map_err(|error| error.to_string())?;
             next_baseline_hashes.insert(relative_path.clone(), workspace_hash);
         } else {
             let _ = fs::remove_file(&project_file_path);
@@ -287,12 +382,14 @@ fn apply_ide_workspace_impl(
     workspace_path: &Path,
     sandbox_state: SandboxWorkspaceState,
 ) -> Result<IdeApplyOutcome, String> {
-    let applied = apply_sandbox_workspace("ide-workspace", project_root, workspace_path, sandbox_state)?;
+    let applied =
+        apply_sandbox_workspace("ide-workspace", project_root, workspace_path, sandbox_state)?;
     let refreshed = refresh_sandbox_workspace_diffs(
         workspace_path,
-        &SandboxWorkspaceState {
+        &mut SandboxWorkspaceState {
             baseline_hashes: applied.next_baseline_hashes.clone(),
             scan_cache: applied.next_cache.clone(),
+            project_root: Some(path_to_string(project_root)),
         },
     )?;
     Ok(IdeApplyOutcome {
@@ -300,19 +397,25 @@ fn apply_ide_workspace_impl(
         sandbox_state: SandboxWorkspaceState {
             baseline_hashes: applied.next_baseline_hashes,
             scan_cache: refreshed.1.clone(),
+            project_root: Some(path_to_string(project_root)),
         },
         modified_paths: refreshed.0,
     })
 }
 
-fn discard_sandbox_workspace(project_root: &Path, workspace_path: &Path) -> Result<SandboxWorkspaceState, String> {
+fn discard_sandbox_workspace(
+    project_root: &Path,
+    workspace_path: &Path,
+) -> Result<SandboxWorkspaceState, String> {
     create_sandbox_workspace(project_root, workspace_path)
 }
 
-fn discard_ide_workspace_impl(project_root: &Path, workspace_path: &Path) -> Result<IdeDiscardOutcome, String> {
+fn discard_ide_workspace_impl(
+    project_root: &Path,
+    workspace_path: &Path,
+) -> Result<IdeDiscardOutcome, String> {
     Ok(IdeDiscardOutcome {
         sandbox_state: discard_sandbox_workspace(project_root, workspace_path)?,
         modified_paths: Vec::new(),
     })
 }
-
