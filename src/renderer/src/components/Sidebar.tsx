@@ -241,13 +241,12 @@ function TreeNode({
   return (
     <div className="space-y-1">
       <button
-        className={`group flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-[13px] transition-all duration-150 ${
-          isSelected
+        className={`group flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-[13px] transition-all duration-150 ${isSelected
             ? 'border-sentinel-accent bg-white/[0.08] text-white'
             : isModified
               ? 'border-sentinel-ice/70 bg-white/[0.04] text-white'
               : 'border-transparent text-sentinel-mist hover:border-white/10 hover:bg-white/[0.04] hover:text-white'
-        }`}
+          }`}
         onClick={() => {
           if (isDirectory) {
             toggle(node.path)
@@ -336,7 +335,6 @@ export function Sidebar({
   const [searchQuery, setSearchQuery] = useState('')
   const [showChangedOnly, setShowChangedOnly] = useState(false)
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = useState(true)
-  const [projectSectionOpen, setProjectSectionOpen] = useState(true)
   const [modesSectionOpen, setModesSectionOpen] = useState(false)
   const [filesSectionOpen, setFilesSectionOpen] = useState(true)
 
@@ -355,7 +353,6 @@ export function Sidebar({
     setSearchQuery('')
     setShowChangedOnly(false)
     setWorkspaceSectionOpen(true)
-    setProjectSectionOpen(true)
     setModesSectionOpen(false)
     setFilesSectionOpen(true)
   }, [project.path])
@@ -448,11 +445,10 @@ export function Sidebar({
   return (
     <aside
       aria-hidden={collapsed}
-      className={`relative flex h-full min-h-0 flex-col overflow-hidden border-r bg-[#081018]/96 transition-[opacity,transform,filter,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        collapsed
+      className={`relative flex h-full min-h-0 flex-col overflow-hidden border-r bg-[#081018]/96 transition-[opacity,transform,filter,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${collapsed
           ? 'pointer-events-none border-transparent opacity-0 -translate-x-6 blur-[2px]'
           : 'border-white/10 opacity-100 translate-x-0 blur-0'
-      }`}
+        }`}
     >
       <div className="pointer-events-none absolute inset-y-0 left-0 w-px bg-gradient-to-b from-sentinel-accent/20 via-sentinel-ice/10 to-transparent" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.05] to-transparent opacity-70" />
@@ -517,11 +513,10 @@ export function Sidebar({
             </button>
 
             <button
-              className={`inline-flex items-center justify-center gap-2 border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${
-                globalMode === 'ide'
+              className={`inline-flex items-center justify-center gap-2 border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] transition ${globalMode === 'ide'
                   ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
                   : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
-              }`}
+                }`}
               onClick={() => onToggleGlobalMode(globalMode === 'multiplex' ? 'ide' : 'multiplex')}
               type="button"
             >
@@ -532,25 +527,7 @@ export function Sidebar({
         </div>
       </SidebarSection>
 
-      <SidebarSection
-        expanded={projectSectionOpen}
-        meta={project.path ? 'project' : 'idle'}
-        onToggle={() => setProjectSectionOpen((current) => !current)}
-        title="Project"
-      >
-        <div className="space-y-3 border-l border-white/10 pl-3">
-          <div className="text-sm font-medium text-white">{project.name || 'No project selected'}</div>
-          {project.path ? (
-            <div className="font-mono text-[11px] leading-5 text-sentinel-mist break-all">
-              {project.path}
-            </div>
-          ) : (
-            <div className="text-xs leading-6 text-sentinel-mist">
-              Open a folder to browse files and run agent sessions.
-            </div>
-          )}
-        </div>
-      </SidebarSection>
+
 
       <SidebarSection
         expanded={modesSectionOpen}
@@ -595,11 +572,10 @@ export function Sidebar({
               </button>
 
               <button
-                className={`border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition ${
-                  globalMode === 'ide'
+                className={`border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition ${globalMode === 'ide'
                     ? 'border-emerald-500/30 bg-emerald-500/12 text-white'
                     : 'border-white/10 bg-white/[0.03] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.05] hover:text-white'
-                }`}
+                  }`}
                 onClick={() => onToggleGlobalMode('ide')}
                 type="button"
               >

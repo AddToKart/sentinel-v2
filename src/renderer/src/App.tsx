@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { FolderOpen, GitBranch, PanelLeft, Plus, RefreshCw, TerminalSquare } from 'lucide-react'
 import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
 
@@ -6,7 +6,7 @@ import { AgentDashboard } from './components/AgentDashboard'
 import { CodePreview } from './components/CodePreview'
 import { ConsoleDrawer } from './components/ConsoleDrawer'
 import { GlobalActionBar } from './components/GlobalActionBar'
-import { IdeTerminalPanel } from './components/IdeTerminalPanel'
+import { IdeTerminalGroup } from './components/IdeTerminalGroup'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
 import { WorkspaceTabs } from './components/WorkspaceTabs'
@@ -92,7 +92,9 @@ export default function App(): JSX.Element {
   // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
+  const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
+  const [statusBarCollapsed, setStatusBarCollapsed] = useState(false)
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
   const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
@@ -298,7 +300,16 @@ export default function App(): JSX.Element {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey && e.code === 'KeyK') { e.preventDefault(); setGlobalActionBarOpen((v) => !v); return }
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'Backquote') { e.preventDefault(); setConsoleOpen((v) => !v) }
+      if (e.ctrlKey && !e.altKey && !e.shiftKey) {
+        if (e.code === 'Backquote') {
+          e.preventDefault()
+          toggleIdeTerminal()
+        }
+        if (e.code === 'KeyJ') {
+          e.preventDefault()
+          setConsoleOpen((v) => !v)
+        }
+      }
     }
     window.addEventListener('keydown', onKey, { capture: true })
     return () => window.removeEventListener('keydown', onKey, { capture: true })
@@ -314,14 +325,16 @@ export default function App(): JSX.Element {
     setSidebarCollapsed((v) => !v)
   }
 
-  function toggleIdeTerminal() {
-    if (ideTerminalCollapsed) {
-      ideTerminalPanelRef.current?.expand()
-    } else {
-      ideTerminalPanelRef.current?.collapse()
-    }
-    setIdeTerminalCollapsed((v) => !v)
-  }
+  const toggleIdeTerminal = useCallback(() => {
+    setIdeTerminalCollapsed((current) => {
+      if (current) {
+        ideTerminalPanelRef.current?.expand()
+      } else {
+        ideTerminalPanelRef.current?.collapse()
+      }
+      return !current
+    })
+  }, [])
 
   async function handleOpenProject() {
     const sentinel = getSentinelBridge()
@@ -565,12 +578,32 @@ export default function App(): JSX.Element {
         className="min-h-0 transition-[flex-basis,height,max-height,min-height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
         style={{ overflow: 'hidden' }}
       >
-        <IdeTerminalPanel
-          fitNonce={fitNonce}
+        <IdeTerminalGroup
           projectPath={project.path}
-          terminalState={ideTerminalState}
           windowsBuildNumber={windowsBuildNumber}
-          onClose={toggleIdeTerminal}
+          fitNonce={fitNonce}
+          ideTerminalState={ideTerminalState}
+          tabs={tabs}
+          activeTerminalId={activeIdeTerminalId}
+          onSelectTerminal={setActiveIdeTerminalId}
+          onCreateTerminal={async () => {
+            const sentinel = getSentinelBridge()
+            if (!sentinel) return
+            try {
+              const newTab = await sentinel.createStandaloneTerminal(80, 24)
+              setTabs((cur) => [...cur, newTab])
+              setActiveIdeTerminalId(newTab.id)
+            } catch (err) {
+              setErrorMessage(getErrorMessage(err))
+            }
+          }}
+          onCloseTerminal={async (id) => {
+            await handleCloseTab(id)
+            if (activeIdeTerminalId === id) {
+              setActiveIdeTerminalId('ide-workspace')
+            }
+          }}
+          onToggleCollapse={toggleIdeTerminal}
         />
       </Panel>
     </Group>
@@ -765,6 +798,8 @@ export default function App(): JSX.Element {
               onToggleConsole={() => setConsoleOpen((v) => !v)}
               summary={workspaceSummary}
               focusedTab={activeStandaloneTab}
+              collapsed={statusBarCollapsed}
+              onToggleCollapse={() => setStatusBarCollapsed((s) => !s)}
             />
           </Panel>
         </Group>
