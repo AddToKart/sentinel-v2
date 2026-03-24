@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter};
 const TREE_DEPTH: usize = 3;
 const TREE_ENTRY_LIMIT: usize = 28;
 const METRIC_INTERVAL_MS: u64 = 1_000;
+const DIFF_INTERVAL_MS: i64 = 2_000;
 const CLOSE_TIMEOUT_MS: u64 = 4_000;
 
 const EVENT_SESSION_OUTPUT: &str = "sentinel:session-output";
@@ -57,7 +58,7 @@ struct FileFingerprint {
 struct SandboxWorkspaceState {
     baseline_hashes: BTreeMap<String, String>,
     scan_cache: BTreeMap<String, FileFingerprint>,
-    project_root: Option<String>, // For lazy hash computation
+    project_root: Option<String>,
 }
 
 type SharedMaster = Arc<Mutex<Box<dyn MasterPty + Send>>>;
@@ -92,6 +93,7 @@ struct SessionRecord {
     tracked_process_ids: Vec<u32>,
     last_cpu_total_seconds: Option<f64>,
     last_sampled_at: Option<i64>,
+    last_diff_scanned_at: Option<i64>,
 }
 
 struct IdeRecord {

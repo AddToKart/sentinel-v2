@@ -1,8 +1,23 @@
 fn hash_file(file_path: &Path) -> Result<String, String> {
-    let content = fs::read(file_path).map_err(|error| error.to_string())?;
+    let mut file = fs::File::open(file_path).map_err(|error| error.to_string())?;
     let mut hasher = Sha1::new();
-    hasher.update(content);
+    let mut buffer = [0_u8; 1024 * 1024];
+
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+struct CopyEntry {
+    relative_path: String,
+    source_path: PathBuf,
+    target_path: PathBuf,
 }
 
 fn create_signature(metadata: &fs::Metadata) -> String {
@@ -15,18 +30,92 @@ fn create_signature(metadata: &fs::Metadata) -> String {
     format!("{}:{}", metadata.len(), modified)
 }
 
-fn copy_project_tree(
+fn preferred_worker_count(item_count: usize) -> usize {
+    if item_count < 48 {
+        return 1;
+    }
+
+    thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(4)
+        .min(8)
+        .min(item_count.max(1))
+}
+
+fn parallel_try_map<T, U, F>(items: &[T], func: F) -> Result<Vec<U>, String>
+where
+    T: Sync,
+    U: Send,
+    F: Fn(&T) -> Result<U, String> + Sync,
+{
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let worker_count = preferred_worker_count(items.len());
+    if worker_count <= 1 {
+        return items.iter().map(func).collect();
+    }
+
+    let chunk_size = (items.len() + worker_count - 1) / worker_count;
+    let results = Mutex::new(Vec::with_capacity(items.len()));
+    let first_error = Mutex::new(None::<String>);
+
+    thread::scope(|scope| {
+        for chunk in items.chunks(chunk_size) {
+            let results = &results;
+            let first_error = &first_error;
+            let func = &func;
+
+            scope.spawn(move || {
+                let mut local = Vec::with_capacity(chunk.len());
+                for item in chunk {
+                    if first_error
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_some()
+                    {
+                        return;
+                    }
+
+                    match func(item) {
+                        Ok(value) => local.push(value),
+                        Err(error) => {
+                            let mut slot =
+                                first_error.lock().unwrap_or_else(|e| e.into_inner());
+                            if slot.is_none() {
+                                *slot = Some(error);
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                results
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend(local);
+            });
+        }
+    });
+
+    if let Some(error) = first_error.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        Err(error)
+    } else {
+        Ok(results.into_inner().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+fn collect_copy_plan_recursive(
     project_root: &Path,
     workspace_path: &Path,
     relative_root: Option<&Path>,
+    directories: &mut Vec<PathBuf>,
+    files: &mut Vec<CopyEntry>,
 ) -> Result<(), String> {
     let source_root = relative_root
         .map(|value| project_root.join(value))
         .unwrap_or_else(|| project_root.to_path_buf());
-    let target_root = relative_root
-        .map(|value| workspace_path.join(value))
-        .unwrap_or_else(|| workspace_path.to_path_buf());
-    fs::create_dir_all(&target_root).map_err(|error| error.to_string())?;
 
     for entry in fs::read_dir(&source_root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -40,22 +129,93 @@ fn copy_project_tree(
         let file_type = entry.file_type().map_err(|error| error.to_string())?;
 
         if file_type.is_dir() {
-            if should_skip_directory(&name) {
+            if should_skip_directory(&name) || should_link_directory(&name) {
                 continue;
             }
-            copy_project_tree(project_root, workspace_path, Some(&relative_path))?;
+
+            directories.push(target_path);
+            collect_copy_plan_recursive(
+                project_root,
+                workspace_path,
+                Some(&relative_path),
+                directories,
+                files,
+            )?;
             continue;
         }
 
         if file_type.is_file() {
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
-            fs::copy(&entry_path, &target_path).map_err(|error| error.to_string())?;
+            files.push(CopyEntry {
+                relative_path: path_to_string(&relative_path),
+                source_path: entry_path,
+                target_path,
+            });
         }
     }
 
     Ok(())
+}
+
+fn copy_file_with_hash(entry: &CopyEntry) -> Result<(String, String, FileFingerprint), String> {
+    let mut source = fs::File::open(&entry.source_path).map_err(|error| error.to_string())?;
+    let mut target = fs::File::create(&entry.target_path).map_err(|error| error.to_string())?;
+    let mut hasher = Sha1::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+
+    loop {
+        let read = source.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+
+        hasher.update(&buffer[..read]);
+        target
+            .write_all(&buffer[..read])
+            .map_err(|error| error.to_string())?;
+    }
+
+    target.flush().map_err(|error| error.to_string())?;
+    drop(target);
+
+    let metadata = fs::metadata(&entry.target_path).map_err(|error| error.to_string())?;
+    let hash = format!("{:x}", hasher.finalize());
+    let fingerprint = FileFingerprint {
+        signature: create_signature(&metadata),
+        hash: hash.clone(),
+    };
+
+    Ok((entry.relative_path.clone(), hash, fingerprint))
+}
+
+fn copy_project_tree(
+    project_root: &Path,
+    workspace_path: &Path,
+    relative_root: Option<&Path>,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, FileFingerprint>), String> {
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    collect_copy_plan_recursive(
+        project_root,
+        workspace_path,
+        relative_root,
+        &mut directories,
+        &mut files,
+    )?;
+
+    for directory in directories {
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    }
+
+    let copied_files = parallel_try_map(&files, copy_file_with_hash)?;
+    let mut baseline_hashes = BTreeMap::new();
+    let mut scan_cache = BTreeMap::new();
+
+    for (relative_path, hash, fingerprint) in copied_files {
+        baseline_hashes.insert(relative_path.clone(), hash);
+        scan_cache.insert(relative_path, fingerprint);
+    }
+
+    Ok((baseline_hashes, scan_cache))
 }
 
 fn list_tracked_files(root_path: &Path) -> Result<Vec<String>, String> {
@@ -98,12 +258,15 @@ fn list_tracked_files_recursive(
 }
 
 fn snapshot_project_hashes(root_path: &Path) -> Result<BTreeMap<String, String>, String> {
+    let tracked_files = list_tracked_files(root_path)?;
     let mut hashes = BTreeMap::new();
-    for relative_path in list_tracked_files(root_path)? {
-        hashes.insert(
+    for (relative_path, hash) in parallel_try_map(&tracked_files, |relative_path| {
+        Ok((
             relative_path.clone(),
-            hash_file(&resolve_workspace_target(root_path, &relative_path)?)?,
-        );
+            hash_file(&resolve_workspace_target(root_path, relative_path)?)?,
+        ))
+    })? {
+        hashes.insert(relative_path, hash);
     }
     Ok(hashes)
 }
@@ -112,86 +275,22 @@ fn snapshot_workspace_files(
     workspace_path: &Path,
     previous_cache: Option<&BTreeMap<String, FileFingerprint>>,
 ) -> Result<BTreeMap<String, FileFingerprint>, String> {
+    let tracked_files = list_tracked_files(workspace_path)?;
     let mut snapshots = BTreeMap::new();
-    for relative_path in list_tracked_files(workspace_path)? {
-        let absolute_path = resolve_workspace_target(workspace_path, &relative_path)?;
+    for (relative_path, fingerprint) in parallel_try_map(&tracked_files, |relative_path| {
+        let absolute_path = resolve_workspace_target(workspace_path, relative_path)?;
         let metadata = fs::metadata(&absolute_path).map_err(|error| error.to_string())?;
         let signature = create_signature(&metadata);
-        let previous = previous_cache.and_then(|cache| cache.get(&relative_path));
+        let previous = previous_cache.and_then(|cache| cache.get(relative_path));
         let hash = match previous {
             Some(previous) if previous.signature == signature => previous.hash.clone(),
             _ => hash_file(&absolute_path)?,
         };
-        snapshots.insert(relative_path, FileFingerprint { signature, hash });
+        Ok((relative_path.clone(), FileFingerprint { signature, hash }))
+    })? {
+        snapshots.insert(relative_path, fingerprint);
     }
     Ok(snapshots)
-}
-
-fn initialize_sandbox_repository(workspace_path: &Path) -> Result<(), String> {
-    let _ = run_command(
-        "git",
-        &["init", "-b", "sentinel-sandbox"],
-        Some(workspace_path),
-    )
-    .or_else(|_| run_command("git", &["init"], Some(workspace_path)))
-    .and_then(|_| {
-        run_command(
-            "git",
-            &["checkout", "-B", "sentinel-sandbox"],
-            Some(workspace_path),
-        )
-    });
-
-    let exclude_path = workspace_path.join(".git").join("info").join("exclude");
-    if let Some(parent) = exclude_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = [
-        ".git",
-        ".next",
-        ".turbo",
-        ".venv",
-        "node_modules",
-        "dist",
-        "out",
-        "build",
-        "coverage",
-        "__pycache__",
-        "venv",
-        ".tox",
-        ".yarn",
-        ".pnpm-store",
-    ]
-    .iter()
-    .map(|entry| format!("{entry}/"))
-    .collect::<Vec<_>>()
-    .join("\n");
-    fs::write(&exclude_path, format!("{content}\n")).map_err(|error| error.to_string())?;
-
-    let _ = run_command(
-        "git",
-        &["config", "user.name", "Sentinel"],
-        Some(workspace_path),
-    );
-    let _ = run_command(
-        "git",
-        &["config", "user.email", "sentinel@local.invalid"],
-        Some(workspace_path),
-    );
-    let _ = run_command("git", &["add", "-A"], Some(workspace_path));
-    let _ = run_command(
-        "git",
-        &["commit", "-m", "Sentinel sandbox baseline"],
-        Some(workspace_path),
-    )
-    .or_else(|_| {
-        run_command(
-            "git",
-            &["commit", "--allow-empty", "-m", "Sentinel sandbox baseline"],
-            Some(workspace_path),
-        )
-    });
-    Ok(())
 }
 
 fn ensure_shared_directories(project_root: &Path, workspace_path: &Path) -> Result<(), String> {
@@ -266,27 +365,15 @@ fn create_sandbox_workspace(
     project_root: &Path,
     workspace_path: &Path,
 ) -> Result<SandboxWorkspaceState, String> {
-    // PERFORMANCE OPTIMIZATION: Skip expensive hash operations during creation
-    // They will be computed lazily when first needed for diff comparison
-
-    // Clean up any existing workspace
     let _ = fs::remove_dir_all(workspace_path);
     fs::create_dir_all(workspace_path).map_err(|error| error.to_string())?;
 
-    // Copy files (this is the unavoidable part, but we can optimize it)
-    copy_project_tree(project_root, workspace_path, None)?;
-
-    // Initialize git repo (needed for change tracking, but can be optimized)
-    let _ = initialize_sandbox_repository(workspace_path);
-
-    // Link shared directories (node_modules, etc.) instead of copying
+    let (baseline_hashes, scan_cache) = copy_project_tree(project_root, workspace_path, None)?;
     let _ = ensure_shared_directories(project_root, workspace_path);
 
-    // PERFORMANCE OPTIMIZATION: Create empty hashes/cache initially
-    // They will be populated on first diff check
     Ok(SandboxWorkspaceState {
-        baseline_hashes: BTreeMap::new(),
-        scan_cache: BTreeMap::new(),
+        baseline_hashes,
+        scan_cache,
         project_root: Some(path_to_string(project_root)),
     })
 }

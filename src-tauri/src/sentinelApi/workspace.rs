@@ -127,6 +127,7 @@ impl SentinelManager {
         let workspace_path = temp_root.join(format!("{}-{}-{}", sanitize_segment(label), session_stamp, token));
 
         fs::create_dir_all(&temp_root).map_err(|error| error.to_string())?;
+        let started_at = now_millis();
         self.push_activity_log(
             app,
             "workspace",
@@ -138,13 +139,14 @@ impl SentinelManager {
 
         match create_sandbox_workspace(Path::new(&project_path), &workspace_path) {
             Ok(sandbox_state) => {
+                let elapsed_ms = now_millis() - started_at;
                 self.push_activity_log(
                     app,
                     "workspace",
                     "completed",
                     "Create sandbox workspace",
                     path_to_string(&workspace_path),
-                    None,
+                    Some(format!("Prepared in {elapsed_ms} ms")),
                 );
                 Ok(SessionWorkspaceResult {
                     workspace_path,
@@ -153,13 +155,14 @@ impl SentinelManager {
                 })
             }
             Err(error) => {
+                let elapsed_ms = now_millis() - started_at;
                 self.push_activity_log(
                     app,
                     "workspace",
                     "failed",
                     "Create sandbox workspace",
                     path_to_string(&workspace_path),
-                    Some(error.clone()),
+                    Some(format!("{error} ({elapsed_ms} ms)")),
                 );
                 Err(error)
             }

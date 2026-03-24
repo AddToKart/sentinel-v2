@@ -282,66 +282,90 @@ export function SessionTile({
   useEffect(() => {
     if (!terminalHostRef.current) return
 
-    const terminal = new Terminal(createTerminalOptions(windowsBuildNumber))
+    let cancelled = false
+    let disposeTerminal = () => {}
+    const supportsIdleCallback = typeof (window as any).requestIdleCallback === 'function'
 
-    const fitAddon = new FitAddon()
-    terminal.loadAddon(fitAddon)
-    terminal.open(terminalHostRef.current)
-    configureTerminalDom(terminal)
+    const initializeTerminal = () => {
+      if (cancelled || !terminalHostRef.current) {
+        return
+      }
 
-    const outputCleanup = subscribeToSessionOutput(session.id, (data) => {
-      enqueueOutput(data)
-    })
+      const terminal = new Terminal(createTerminalOptions(windowsBuildNumber))
 
-    const inputDisposable = terminal.onData((data) => {
-      void window.sentinel.sendInput(session.id, data)
-    })
+      const fitAddon = new FitAddon()
+      terminal.loadAddon(fitAddon)
+      terminal.open(terminalHostRef.current)
+      configureTerminalDom(terminal)
 
-    const observer = new ResizeObserver(() => {
-      scheduleTerminalFit(140)
-    })
-    observer.observe(terminalHostRef.current)
+      const outputCleanup = subscribeToSessionOutput(session.id, (data) => {
+        enqueueOutput(data)
+      })
 
-    const disposeMaintenance = installTerminalMaintenance(
-      terminal,
-      () => viewModeRef.current === 'terminal'
-    )
+      const inputDisposable = terminal.onData((data) => {
+        void window.sentinel.sendInput(session.id, data)
+      })
 
-    requestAnimationFrame(() => {
-      scheduleTerminalFit(0)
-      scheduleTerminalFocus()
-    })
+      const observer = new ResizeObserver(() => {
+        scheduleTerminalFit(140)
+      })
+      observer.observe(terminalHostRef.current)
 
-    terminalRef.current = terminal
-    fitAddonRef.current = fitAddon
+      const disposeMaintenance = installTerminalMaintenance(
+        terminal,
+        () => viewModeRef.current === 'terminal'
+      )
+
+      requestAnimationFrame(() => {
+        scheduleTerminalFit(0)
+        scheduleTerminalFocus()
+      })
+
+      terminalRef.current = terminal
+      fitAddonRef.current = fitAddon
+
+      disposeTerminal = () => {
+        observer.disconnect()
+        disposeMaintenance()
+        outputCleanup()
+        inputDisposable.dispose()
+        if (writeFrameRef.current !== null) {
+          cancelAnimationFrame(writeFrameRef.current)
+          writeFrameRef.current = null
+        }
+        if (fitFrameRef.current !== null) {
+          cancelAnimationFrame(fitFrameRef.current)
+          fitFrameRef.current = null
+        }
+        if (fitTimerRef.current !== null) {
+          window.clearTimeout(fitTimerRef.current)
+          fitTimerRef.current = null
+        }
+        if (focusFrameRef.current !== null) {
+          cancelAnimationFrame(focusFrameRef.current)
+          focusFrameRef.current = null
+        }
+        writeQueueRef.current = []
+        writeInFlightRef.current = false
+        lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
+        terminal.dispose()
+        terminalRef.current = null
+        fitAddonRef.current = null
+      }
+    }
+
+    const idleHandle = supportsIdleCallback
+      ? ((window as any).requestIdleCallback(initializeTerminal, { timeout: 120 }) as number)
+      : window.setTimeout(initializeTerminal, 16)
 
     return () => {
-      observer.disconnect()
-      disposeMaintenance()
-      outputCleanup()
-      inputDisposable.dispose()
-      if (writeFrameRef.current !== null) {
-        cancelAnimationFrame(writeFrameRef.current)
-        writeFrameRef.current = null
+      cancelled = true
+      if (supportsIdleCallback) {
+        ;(window as any).cancelIdleCallback?.(idleHandle)
+      } else {
+        window.clearTimeout(idleHandle)
       }
-      if (fitFrameRef.current !== null) {
-        cancelAnimationFrame(fitFrameRef.current)
-        fitFrameRef.current = null
-      }
-      if (fitTimerRef.current !== null) {
-        window.clearTimeout(fitTimerRef.current)
-        fitTimerRef.current = null
-      }
-      if (focusFrameRef.current !== null) {
-        cancelAnimationFrame(focusFrameRef.current)
-        focusFrameRef.current = null
-      }
-      writeQueueRef.current = []
-      writeInFlightRef.current = false
-      lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
-      terminal.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
+      disposeTerminal()
     }
   }, [session.id, windowsBuildNumber])
 

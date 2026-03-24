@@ -98,6 +98,7 @@ impl SentinelManager {
             tracked_process_ids: handles.pid.into_iter().collect(),
             last_cpu_total_seconds: None,
             last_sampled_at: None,
+            last_diff_scanned_at: None,
         };
 
         if let Some(command) = input

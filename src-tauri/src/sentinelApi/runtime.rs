@@ -256,6 +256,19 @@ impl SentinelManager {
             let mut updates = Vec::new();
             for session_id in &active_session_ids {
                 if let Some(record) = inner.sessions.get_mut(session_id) {
+                    if matches!(record.summary.status, SessionStatus::Closing) {
+                        continue;
+                    }
+
+                    let should_scan_diff = record
+                        .last_diff_scanned_at
+                        .map(|last_scanned_at| sampled_at - last_scanned_at >= DIFF_INTERVAL_MS)
+                        .unwrap_or(true);
+                    if !should_scan_diff {
+                        continue;
+                    }
+
+                    record.last_diff_scanned_at = Some(sampled_at);
                     let next_modified_paths =
                         collect_workspace_diffs_for_record(record).unwrap_or_default();
                     if next_modified_paths != record.modified_paths {
