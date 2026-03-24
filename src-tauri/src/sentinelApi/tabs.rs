@@ -2,16 +2,22 @@ impl SentinelManager {
     pub fn create_standalone_terminal(
         self: &Arc<Self>,
         app: &AppHandle,
+        cwd: Option<String>,
         cols: u16,
         rows: u16,
     ) -> Result<TabSummary, String> {
         let tab_id = generate_id();
 
-        // Spawn terminal at root directory
-        let root_dir = if cfg!(windows) {
-            PathBuf::from("C:\\")
-        } else {
-            PathBuf::from("/")
+        // Spawn terminal at requested directory or root
+        let root_dir = match cwd {
+            Some(path_str) => PathBuf::from(path_str),
+            None => {
+                if cfg!(windows) {
+                    PathBuf::from("C:\\")
+                } else {
+                    PathBuf::from("/")
+                }
+            }
         };
 
         let handles = self.spawn_standalone_terminal(

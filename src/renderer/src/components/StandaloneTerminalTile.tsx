@@ -17,13 +17,15 @@ interface StandaloneTerminalTileProps {
   onClose: () => void
   windowsBuildNumber?: number
   onFocus?: () => void
+  hideMaximize?: boolean
 }
 
 export function StandaloneTerminalTile({
   tab,
   fitNonce,
   onClose,
-  windowsBuildNumber
+  windowsBuildNumber,
+  hideMaximize
 }: StandaloneTerminalTileProps): JSX.Element {
   const terminalHostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -211,17 +213,19 @@ export function StandaloneTerminalTile({
           )}
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => setIsMaximized(!isMaximized)}
-            className="p-1 text-sentinel-mist hover:text-white hover:bg-white/10 transition-colors"
-            title={isMaximized ? 'Minimize' : 'Maximize'}
-          >
-            {isMaximized ? (
-              <Minimize2 className="h-3 w-3" />
-            ) : (
-              <Maximize2 className="h-3 w-3" />
-            )}
-          </button>
+          {!hideMaximize && (
+            <button
+              onClick={() => setIsMaximized(!isMaximized)}
+              className="p-1 text-sentinel-mist hover:text-white hover:bg-white/10 transition-colors"
+              title={isMaximized ? 'Minimize' : 'Maximize'}
+            >
+              {isMaximized ? (
+                <Minimize2 className="h-3 w-3" />
+              ) : (
+                <Maximize2 className="h-3 w-3" />
+              )}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="p-1 text-sentinel-mist hover:text-white hover:bg-red-500/20 transition-colors"

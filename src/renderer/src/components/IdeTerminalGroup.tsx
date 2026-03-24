@@ -59,6 +59,7 @@ export function IdeTerminalGroup({
               fitNonce={fitNonce}
               windowsBuildNumber={windowsBuildNumber}
               onClose={() => onCloseTerminal(tab.id, {} as any)}
+              hideMaximize={true}
             />
           </div>
         ))}

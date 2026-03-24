@@ -230,7 +230,7 @@ export interface SentinelApi {
   discardSessionChanges: (sessionId: string) => Promise<void>
   revealInFileExplorer: (filePath: string) => Promise<void>
   openInSystemEditor: (filePath: string) => Promise<void>
-  createStandaloneTerminal: (cols: number, rows: number) => Promise<TabSummary>
+  createStandaloneTerminal: (cwd: string | undefined, cols: number, rows: number) => Promise<TabSummary>
   closeTab: (tabId: string) => Promise<void>
   resizeTab: (tabId: string, cols: number, rows: number) => Promise<void>
   sendTabInput: (tabId: string, data: string) => Promise<void>

@@ -434,7 +434,7 @@ export default function App(): JSX.Element {
 
     try {
       // Default terminal size - will be resized by the component
-      const newTab = await sentinel.createStandaloneTerminal(80, 24)
+      const newTab = await sentinel.createStandaloneTerminal(undefined, 80, 24)
       setTabs((cur) => [...cur, newTab])
       setActiveTabId(newTab.id)
     } catch (error) {
@@ -590,7 +590,7 @@ export default function App(): JSX.Element {
             const sentinel = getSentinelBridge()
             if (!sentinel) return
             try {
-              const newTab = await sentinel.createStandaloneTerminal(80, 24)
+              const newTab = await sentinel.createStandaloneTerminal(ideTerminalState?.workspacePath, 80, 24)
               setTabs((cur) => [...cur, newTab])
               setActiveIdeTerminalId(newTab.id)
             } catch (err) {
