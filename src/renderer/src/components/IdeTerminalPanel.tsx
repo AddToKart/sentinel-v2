@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { CheckCheck, LoaderCircle, RefreshCw, RotateCcw, TerminalSquare } from 'lucide-react'
@@ -19,6 +20,7 @@ interface IdeTerminalPanelProps {
   terminalState: IdeTerminalState
   windowsBuildNumber?: number
   onClose?: () => void
+  actionsTarget?: HTMLDivElement | null
 }
 
 function createIdleState(projectPath?: string): IdeTerminalState {
@@ -44,7 +46,8 @@ export function IdeTerminalPanel({
   projectPath,
   terminalState: externalState,
   windowsBuildNumber,
-  onClose
+  onClose,
+  actionsTarget
 }: IdeTerminalPanelProps): JSX.Element {
   const terminalHostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -396,76 +399,86 @@ export function IdeTerminalPanel({
     )
   }
 
+  const actions = (
+    <>
+      {terminalState.modifiedPaths.length > 0 && (
+        <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300/80 mr-1">
+          {terminalState.modifiedPaths.length} changes
+        </span>
+      )}
+      {(connecting || terminalState.status === 'starting') && (
+        <LoaderCircle className="h-3 w-3 animate-spin text-amber-300" />
+      )}
+      <span className="text-[10px] uppercase tracking-[0.2em] text-sentinel-mist/70">
+        {describeState(terminalState)}
+      </span>
+      <button
+        className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-sentinel-glow disabled:opacity-30"
+        disabled={terminalState.modifiedPaths.length === 0 || operationLoading !== null}
+        onClick={() => void handleWorkspaceOp('apply')}
+        title="Apply IDE workspace to main project"
+        type="button"
+      >
+        <CheckCheck className="h-3.5 w-3.5" />
+      </button>
+      <button
+        className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-rose-300 disabled:opacity-30"
+        disabled={terminalState.modifiedPaths.length === 0 || operationLoading !== null}
+        onClick={() => void handleWorkspaceOp('discard')}
+        title="Reset IDE workspace"
+        type="button"
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </button>
+      <button
+        className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-white"
+        onClick={() => {
+          if (terminalState.status === 'ready') {
+            healTerminalDisplay()
+            return
+          }
+
+          ensureTerminal(true).catch((error) => {
+            console.error('Failed to reconnect IDE terminal:', error)
+            enqueueOutput(`\r\n\x1b[38;2;255;170;170mReconnection failed: ${getErrorMessage(error)}\x1b[0m\r\n`)
+          })
+        }}
+        title={terminalState.status === 'ready' ? 'Recover display' : 'Reconnect shell'}
+        type="button"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+      </button>
+      {onClose && !actionsTarget && (
+        <button
+          className="ml-2 inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-rose-400"
+          onClick={onClose}
+          title="Close IDE terminal"
+          type="button"
+        >
+          <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5">
+            <path d="M11.7816 4.03157C12.0062 3.80702 12.0062 3.44295 11.7816 3.2184C11.5571 2.99385 11.193 2.99385 10.9685 3.2184L7.50005 6.68682L4.03164 3.2184C3.80708 2.99385 3.44301 2.99385 3.21846 3.2184C2.99391 3.44295 2.99391 3.80702 3.21846 4.03157L6.68688 7.49999L3.21846 10.9684C2.99391 11.193 2.99391 11.557 3.21846 11.7816C3.44301 12.0061 3.80708 12.0061 4.03164 11.7816L7.50005 8.31316L10.9685 11.7816C11.193 12.0061 11.5571 12.0061 11.7816 11.7816C12.0062 11.557 12.0062 11.193 11.7816 10.9684L8.31322 7.49999L11.7816 4.03157Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path>
+          </svg>
+        </button>
+      )}
+    </>
+  )
+
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-t border-white/10 bg-[#060a0f]">
-      <div className="flex h-[24px] shrink-0 items-center justify-between border-b border-white/10 bg-black/40 px-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <TerminalSquare className="h-3 w-3 text-sentinel-accent" />
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">IDE Workspace</span>
-          <span className="truncate text-[10px] text-sentinel-mist/70">{terminalState.workspacePath || terminalState.cwd || projectPath}</span>
+      {actionsTarget ? (
+        createPortal(actions, actionsTarget)
+      ) : (
+        <div className="flex h-[24px] shrink-0 items-center justify-between border-b border-white/10 bg-black/40 px-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <TerminalSquare className="h-3 w-3 text-sentinel-accent" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">IDE Workspace</span>
+            <span className="truncate text-[10px] text-sentinel-mist/70">{terminalState.workspacePath || terminalState.cwd || projectPath}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {actions}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {terminalState.modifiedPaths.length > 0 && (
-            <span className="text-[10px] uppercase tracking-[0.2em] text-amber-300/80">
-              {terminalState.modifiedPaths.length} changes
-            </span>
-          )}
-          {(connecting || terminalState.status === 'starting') && (
-            <LoaderCircle className="h-3 w-3 animate-spin text-amber-300" />
-          )}
-          <span className="text-[10px] uppercase tracking-[0.2em] text-sentinel-mist/70">
-            {describeState(terminalState)}
-          </span>
-          <button
-            className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-sentinel-glow disabled:opacity-30"
-            disabled={terminalState.modifiedPaths.length === 0 || operationLoading !== null}
-            onClick={() => void handleWorkspaceOp('apply')}
-            title="Apply IDE workspace to main project"
-            type="button"
-          >
-            <CheckCheck className="h-3 w-3" />
-          </button>
-          <button
-            className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-rose-300 disabled:opacity-30"
-            disabled={terminalState.modifiedPaths.length === 0 || operationLoading !== null}
-            onClick={() => void handleWorkspaceOp('discard')}
-            title="Reset IDE workspace"
-            type="button"
-          >
-            <RotateCcw className="h-3 w-3" />
-          </button>
-          <button
-            className="inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-white"
-            onClick={() => {
-              if (terminalState.status === 'ready') {
-                healTerminalDisplay()
-                return
-              }
-
-              ensureTerminal(true).catch((error) => {
-                console.error('Failed to reconnect IDE terminal:', error)
-                enqueueOutput(`\r\n\x1b[38;2;255;170;170mReconnection failed: ${getErrorMessage(error)}\x1b[0m\r\n`)
-              })
-            }}
-            title={terminalState.status === 'ready' ? 'Recover display' : 'Reconnect shell'}
-            type="button"
-          >
-            <RefreshCw className="h-3 w-3" />
-          </button>
-          {onClose && (
-            <button
-              className="ml-2 inline-flex h-5 w-5 items-center justify-center text-sentinel-mist/60 transition hover:text-white"
-              onClick={onClose}
-              title="Close IDE terminal"
-              type="button"
-            >
-              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5">
-                <path d="M11.7816 4.03157C12.0062 3.80702 12.0062 3.44295 11.7816 3.2184C11.5571 2.99385 11.193 2.99385 10.9685 3.2184L7.50005 6.68682L4.03164 3.2184C3.80708 2.99385 3.44301 2.99385 3.21846 3.2184C2.99391 3.44295 2.99391 3.80702 3.21846 4.03157L6.68688 7.49999L3.21846 10.9684C2.99391 11.193 2.99391 11.557 3.21846 11.7816C3.44301 12.0061 3.80708 12.0061 4.03164 11.7816L7.50005 8.31316L10.9685 11.7816C11.193 12.0061 11.5571 12.0061 11.7816 11.7816C12.0062 11.557 12.0062 11.193 11.7816 10.9684L8.31322 7.49999L11.7816 4.03157Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path>
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="terminal-host h-full min-h-0 w-full overflow-hidden" onMouseDown={() => scheduleTerminalFocus()} onWheel={handleWheel} ref={terminalHostRef} />
     </div>
