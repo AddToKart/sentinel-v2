@@ -91,6 +91,7 @@ export default function App(): JSX.Element {
 
   // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
+  const [ideTabIds, setIdeTabIds] = useState<string[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
@@ -456,6 +457,7 @@ export default function App(): JSX.Element {
     // Optimistically remove the tab so it never becomes a zombie, even if
     // the backend errors (e.g. process already exited before user clicked X).
     setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
+    setIdeTabIds((current) => current.filter((id) => id !== tabId))
     clearTabOutput(tabId)
 
     try {
@@ -583,7 +585,7 @@ export default function App(): JSX.Element {
           windowsBuildNumber={windowsBuildNumber}
           fitNonce={fitNonce}
           ideTerminalState={ideTerminalState}
-          tabs={tabs}
+          tabs={tabs.filter(t => ideTabIds.includes(t.id))}
           activeTerminalId={activeIdeTerminalId}
           onSelectTerminal={setActiveIdeTerminalId}
           onCreateTerminal={async () => {
@@ -591,6 +593,7 @@ export default function App(): JSX.Element {
             if (!sentinel) return
             try {
               const newTab = await sentinel.createStandaloneTerminal(ideTerminalState?.workspacePath, 80, 24)
+              setIdeTabIds((cur) => [...cur, newTab.id])
               setTabs((cur) => [...cur, newTab])
               setActiveIdeTerminalId(newTab.id)
             } catch (err) {
@@ -747,7 +750,7 @@ export default function App(): JSX.Element {
             {/* Tab Bar - Hidden in IDE mode to save vertical space */}
             {globalMode !== 'ide' && (
               <WorkspaceTabs
-                tabs={tabs}
+                tabs={tabs.filter((t) => !ideTabIds.includes(t.id))}
                 activeTabId={activeTabId}
                 onTabSelect={setActiveTabId}
                 onTabClose={handleCloseTab}
