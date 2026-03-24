@@ -319,11 +319,14 @@ export function IdeTerminalPanel({
   }, [fitNonce])
 
   useEffect(() => {
+    // Always clear existing interval first
+    if (recoveryTimerRef.current !== null) {
+      window.clearInterval(recoveryTimerRef.current)
+      recoveryTimerRef.current = null
+    }
+
+    // Only set up new interval if status is ready
     if (terminalState.status !== 'ready') {
-      if (recoveryTimerRef.current !== null) {
-        window.clearInterval(recoveryTimerRef.current)
-        recoveryTimerRef.current = null
-      }
       return
     }
 
@@ -333,6 +336,7 @@ export function IdeTerminalPanel({
     }, intervalMs)
 
     return () => {
+      // Cleanup will run when effect reruns or component unmounts
       if (recoveryTimerRef.current !== null) {
         window.clearInterval(recoveryTimerRef.current)
         recoveryTimerRef.current = null

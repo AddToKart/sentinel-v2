@@ -157,7 +157,11 @@ export default function App(): JSX.Element {
       sentinelBridge.onSessionMetrics((u) => {
         setSessions((cur) => {
           const i = cur.findIndex((s) => s.id === u.sessionId)
-          if (i >= 0) { const n = [...cur]; n[i] = { ...n[i], metrics: u.metrics, pid: u.pid ?? n[i].pid }; return n }
+          if (i >= 0 && cur[i].status !== 'closed') {
+            const n = [...cur]
+            n[i] = { ...n[i], metrics: u.metrics, pid: u.pid ?? n[i].pid }
+            return n
+          }
           return cur
         })
       }),
@@ -187,7 +191,7 @@ export default function App(): JSX.Element {
       sentinelBridge.onTabMetrics((update) => {
         setTabs((curTabs) => {
           const i = curTabs.findIndex((t) => t.id === update.tabId)
-          if (i >= 0) {
+          if (i >= 0 && curTabs[i].status !== 'closed') {
             const n = [...curTabs]
             n[i] = { ...n[i], metrics: update.metrics, pid: update.pid ?? n[i].pid }
             return n
@@ -235,7 +239,13 @@ export default function App(): JSX.Element {
 
     return () => {
       disposed = true
-      unsubs.forEach((fn) => fn())
+      unsubs.forEach((fn) => {
+        try {
+          fn()
+        } catch (error) {
+          console.error('[sentinel] Failed to unsubscribe from event', { error })
+        }
+      })
     }
   }, [])
 
@@ -408,6 +418,10 @@ export default function App(): JSX.Element {
       return
     }
 
+    // Find the tab before removal in case we need to restore it
+    const tabToClose = tabs.find((t) => t.id === tabId)
+    if (!tabToClose) return
+
     // Optimistically remove the tab so it never becomes a zombie, even if
     // the backend errors (e.g. process already exited before user clicked X).
     setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
@@ -419,9 +433,20 @@ export default function App(): JSX.Element {
       // Only surface the error if it isn't "Tab not found" — that just means
       // the process already exited cleanly before we sent the close request.
       const msg = getErrorMessage(error)
-      if (!msg.toLowerCase().includes('not found')) {
-        setErrorMessage(`Failed to close tab: ${msg}`)
+      if (msg.toLowerCase().includes('not found')) {
+        // Tab not found is expected - clean close
+        return
       }
+
+      // For other errors, restore the tab to the UI since close failed
+      setTabs((currentTabs) => {
+        if (currentTabs.some((t) => t.id === tabId)) {
+          // Already restored somehow, don't re-add
+          return currentTabs
+        }
+        return [...currentTabs, tabToClose]
+      })
+      setErrorMessage(`Failed to close tab: ${msg}`)
     }
   }
 

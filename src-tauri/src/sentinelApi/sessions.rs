@@ -126,7 +126,14 @@ impl SentinelManager {
             track_command_input(&mut record.command_buffer, &mut record.history, data);
             record.writer.clone()
         };
-        write_terminal(&writer, data.as_bytes())
+
+        match write_terminal(&writer, data.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("[sentinel] Failed to send input to session {}: {}", session_id, e);
+                Err(e)
+            }
+        }
     }
 
     pub fn resize_session(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {

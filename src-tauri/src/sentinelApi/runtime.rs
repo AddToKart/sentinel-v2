@@ -210,16 +210,19 @@ impl SentinelManager {
                     if let Some(snapshot) = maybe_snapshot {
                         let cpu_percent =
                             match (record.last_cpu_total_seconds, record.last_sampled_at) {
-                                (Some(previous_cpu), Some(previous_sampled_at))
-                                    if sampled_at > previous_sampled_at =>
-                                {
-                                    let cpu_delta = snapshot.cpu_total_seconds - previous_cpu;
-                                    let elapsed =
-                                        (sampled_at - previous_sampled_at) as f64 / 1000.0;
-                                    if elapsed > 0.0 {
-                                        round(cpu_delta.max(0.0) / elapsed * 100.0, 1)
-                                    } else {
+                                (Some(previous_cpu), Some(previous_sampled_at)) => {
+                                    // Guard against clock skew (sampled_at < previous_sampled_at on Windows)
+                                    if sampled_at <= previous_sampled_at {
                                         0.0
+                                    } else {
+                                        let cpu_delta = snapshot.cpu_total_seconds - previous_cpu;
+                                        let elapsed = (sampled_at - previous_sampled_at) as f64 / 1000.0;
+                                        // Ensure elapsed is positive and non-zero
+                                        if elapsed > 0.001 {
+                                            round(cpu_delta.max(0.0) / elapsed * 100.0, 1)
+                                        } else {
+                                            0.0
+                                        }
                                     }
                                 }
                                 _ => 0.0,

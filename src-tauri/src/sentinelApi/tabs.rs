@@ -177,7 +177,13 @@ impl SentinelManager {
             record.writer.clone()
         };
 
-        write_terminal(&writer, data.as_bytes())
+        match write_terminal(&writer, data.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("[sentinel] Failed to send input to tab {}: {}", tab_id, e);
+                Err(e)
+            }
+        }
     }
 
     fn get_next_terminal_number(&self) -> usize {

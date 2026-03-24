@@ -87,7 +87,15 @@ impl SentinelManager {
         };
 
         match writer {
-            Some(writer) => write_terminal(&writer, data.as_bytes()),
+            Some(writer) => {
+                match write_terminal(&writer, data.as_bytes()) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        eprintln!("[sentinel] Failed to send input to IDE terminal: {}", e);
+                        Err(e)
+                    }
+                }
+            }
             None => {
                 let _ = self.ensure_ide_terminal(app)?;
                 let writer = {
@@ -99,7 +107,13 @@ impl SentinelManager {
                         .map(|record| record.writer.clone())
                         .ok_or_else(|| "IDE terminal is unavailable.".to_string())?
                 };
-                write_terminal(&writer, data.as_bytes())
+                match write_terminal(&writer, data.as_bytes()) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        eprintln!("[sentinel] Failed to send input to IDE terminal (after ensure): {}", e);
+                        Err(e)
+                    }
+                }
             }
         }
     }

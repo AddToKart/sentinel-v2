@@ -50,8 +50,16 @@ export function StandaloneTerminalTile({
       const chunk = writeQueueRef.current.join('')
       writeQueueRef.current = []
       writeInFlightRef.current = true
+
+      // Check disposed flag again immediately before write to prevent race conditions
+      if (isDisposedRef.current) {
+        writeInFlightRef.current = false
+        return
+      }
+
       terminal.write(chunk, () => {
         writeInFlightRef.current = false
+        // Additional check before recursing in callback
         if (!isDisposedRef.current && writeQueueRef.current.length > 0) {
           scheduleWriteFlush()
         }

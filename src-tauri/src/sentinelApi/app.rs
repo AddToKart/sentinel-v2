@@ -19,9 +19,15 @@ impl SentinelManager {
 
     pub fn start_refresh_loop(self: &Arc<Self>, app: AppHandle) {
         let manager = self.clone();
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(METRIC_INTERVAL_MS));
-            manager.refresh_runtime_state(&app);
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_millis(METRIC_INTERVAL_MS));
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    manager.refresh_runtime_state(&app);
+                })).unwrap_or_else(|e| {
+                    eprintln!("[sentinel] Panic in refresh loop: {:?}", e);
+                });
+            }
         });
     }
 
