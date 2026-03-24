@@ -1,17 +1,24 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { FolderOpen, GitBranch, PanelLeft, Plus, RefreshCw, TerminalSquare } from 'lucide-react'
-import { Group, Panel, PanelImperativeHandle, Separator } from 'react-resizable-panels'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { FolderOpen, PanelLeft, Plus, RefreshCw, TerminalSquare } from 'lucide-react'
+import type { PanelImperativeHandle } from 'react-resizable-panels'
 
-import { AgentDashboard } from './components/AgentDashboard'
-import { CodePreview } from './components/CodePreview'
+import { AppHeader } from './app/components/AppHeader'
+import { AppWorkspacePanels } from './app/components/AppWorkspacePanels'
+import { BridgeUnavailableScreen } from './app/components/BridgeUnavailableScreen'
+import { IdeWorkspaceView } from './app/components/IdeWorkspaceView'
+import { MultiplexWorkspaceView } from './app/components/MultiplexWorkspaceView'
+import { useKeyboardShortcuts } from './app/hooks/useKeyboardShortcuts'
+import { useSentinelBootstrap } from './app/hooks/useSentinelBootstrap'
+import {
+  defaultIdeTerminalState,
+  defaultSummary,
+  emptyProject,
+  getSentinelBridge,
+  missingBridgeMessage,
+  type WorkspaceAction
+} from './app/support'
 import { ConsoleDrawer } from './components/ConsoleDrawer'
 import { GlobalActionBar } from './components/GlobalActionBar'
-import { IdeTerminalGroup } from './components/IdeTerminalGroup'
-import { Sidebar } from './components/Sidebar'
-import { StatusBar } from './components/StatusBar'
-import { WorkspaceTabs } from './components/WorkspaceTabs'
-import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
-import { StandaloneTerminalTile } from './components/StandaloneTerminalTile'
 import { getErrorMessage } from './error-utils'
 import { clearIdeTerminalOutput, clearSessionOutput } from './terminal-stream'
 import { clearTabOutput } from './tab-stream'
@@ -34,67 +41,6 @@ import type {
   WorkspaceSummary
 } from '@shared/types'
 
-const emptyProject = (): ProjectState => ({
-  isGitRepo: false,
-  tree: [],
-  name: undefined,
-  path: undefined,
-  branch: undefined
-})
-
-const defaultSummary = (): WorkspaceSummary => ({
-  activeSessions: 0,
-  activeWorkspaceSessionCount: 0,
-  activeWorkspaceTabCount: 0,
-  workspaceCount: 0,
-  totalSessions: 0,
-  totalTabs: 0,
-  totalCpuPercent: 0,
-  totalMemoryMb: 0,
-  totalProcesses: 0,
-  lastUpdated: Date.now(),
-  defaultSessionStrategy: 'sandbox-copy'
-})
-
-const defaultIdeTerminalState = (): IdeTerminalState => ({
-  status: 'idle',
-  shell: 'powershell.exe',
-  modifiedPaths: []
-})
-
-// Tab types are now defined in shared/types.ts
-
-function getSentinelBridge(): SentinelApi | null {
-  return typeof window !== 'undefined' && typeof window.sentinel !== 'undefined'
-    ? window.sentinel
-    : null
-}
-
-function missingBridgeMessage(): string {
-  return 'Sentinel desktop bridge is unavailable. Run this UI through the Tauri app, not a plain browser tab.'
-}
-
-function sortWorkspaces(workspaces: WorkspaceContext[]): WorkspaceContext[] {
-  return [...workspaces].sort((left, right) => {
-    if (left.lastActiveAt !== right.lastActiveAt) {
-      return right.lastActiveAt - left.lastActiveAt
-    }
-
-    return left.name.localeCompare(right.name)
-  })
-}
-
-function upsertWorkspace(
-  current: WorkspaceContext[],
-  workspace: WorkspaceContext
-): WorkspaceContext[] {
-  const next = current.some((existing) => existing.id === workspace.id)
-    ? current.map((existing) => (existing.id === workspace.id ? workspace : existing))
-    : [...current, workspace]
-
-  return sortWorkspaces(next)
-}
-
 export default function App(): JSX.Element {
   const [project, setProject] = useState<ProjectState>(emptyProject())
   const [workspaces, setWorkspaces] = useState<WorkspaceContext[]>([])
@@ -104,7 +50,6 @@ export default function App(): JSX.Element {
   const [sessionHistories, setSessionHistories] = useState<Record<string, SessionCommandEntry[]>>({})
   const [sessionDiffs, setSessionDiffs] = useState<Record<string, string[]>>({})
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([])
-
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [consoleOpen, setConsoleOpen] = useState(false)
   const [fitNonce, setFitNonce] = useState(0)
@@ -118,8 +63,6 @@ export default function App(): JSX.Element {
   const [defaultSessionStrategy, setDefaultSessionStrategy] = useState<SessionWorkspaceStrategy>('sandbox-copy')
   const [ideTerminalState, setIdeTerminalState] = useState<IdeTerminalState>(defaultIdeTerminalState())
   const [windowsBuildNumber, setWindowsBuildNumber] = useState<number | undefined>(undefined)
-
-  // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [ideTabIds, setIdeTabIds] = useState<string[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
@@ -132,6 +75,7 @@ export default function App(): JSX.Element {
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const workspacesRef = useRef<WorkspaceContext[]>([])
+
   const bridgeAvailable = Boolean(getSentinelBridge())
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null
@@ -142,205 +86,59 @@ export default function App(): JSX.Element {
     ? tabs.filter((tab) => tab.workspaceId === activeWorkspaceId)
     : []
 
-  function requestTerminalFit(delay = 140) {
+  function requestTerminalFit(delay = 140): void {
     if (fitTimerRef.current) {
       window.clearTimeout(fitTimerRef.current)
     }
 
     fitTimerRef.current = window.setTimeout(() => {
       fitTimerRef.current = null
-      setFitNonce((n) => n + 1)
+      setFitNonce((value) => value + 1)
     }, delay)
   }
 
-  // Bootstrap
+  function requireSentinelBridge(): SentinelApi | null {
+    const sentinel = getSentinelBridge()
+    if (!sentinel) {
+      setErrorMessage(missingBridgeMessage())
+      return null
+    }
+
+    return sentinel
+  }
+
   useEffect(() => {
     workspacesRef.current = workspaces
   }, [workspaces])
 
-  useEffect(() => {
-    let disposed = false
-    const sentinel = getSentinelBridge()
+  useSentinelBootstrap({
+    workspacesRef,
+    setActivityLog,
+    setActiveWorkspaceId,
+    setDefaultSessionStrategy,
+    setErrorMessage,
+    setIdeTerminalState,
+    setMaximizedSessionId,
+    setProject,
+    setSelectedFile,
+    setSessionDiffs,
+    setSessionHistories,
+    setSessions,
+    setTabs,
+    setWindowsBuildNumber,
+    setWorkspaceSummary,
+    setWorkspaces
+  })
 
-    if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
-      return
-    }
-
-    const sentinelBridge: SentinelApi = sentinel
-
-    const unsubs = [
-      sentinelBridge.onActivityLog((entry) => {
-        setActivityLog((cur) => {
-          const i = cur.findIndex((e) => e.id === entry.id)
-          if (i >= 0) { const n = [...cur]; n[i] = entry; return n }
-          return [entry, ...cur].slice(0, 100)
-        })
-      }),
-      sentinelBridge.onProjectState(setProject),
-      sentinelBridge.onWorkspaceState(setWorkspaceSummary),
-      sentinelBridge.onWorkspaceCreated((workspace) => {
-        setWorkspaces((current) => upsertWorkspace(current, workspace))
-        setActiveWorkspaceId(workspace.id)
-        setDefaultSessionStrategy(workspace.defaultSessionStrategy)
-      }),
-      sentinelBridge.onWorkspaceUpdated((workspace) => {
-        setWorkspaces((current) => upsertWorkspace(current, workspace))
-      }),
-      sentinelBridge.onWorkspaceSwitched((workspace) => {
-        setWorkspaces((current) => upsertWorkspace(current, workspace))
-        setActiveWorkspaceId(workspace.id)
-        setProject(workspace.project)
-        setDefaultSessionStrategy(workspace.defaultSessionStrategy)
-        setSelectedFile(null)
-        setMaximizedSessionId(null)
-      }),
-      sentinelBridge.onWorkspaceRemoved((payload) => {
-        setActiveWorkspaceId((current) =>
-          current === payload.workspaceId ? null : current
-        )
-        setWorkspaces((current) =>
-          current.filter((workspace) => workspace.id !== payload.workspaceId)
-        )
-      }),
-      sentinelBridge.onSessionState((session) => {
-        setSessions((cur) => {
-          const workspaceExists = workspacesRef.current.some(
-            (workspace) => workspace.id === session.workspaceId
-          )
-          const i = cur.findIndex((s) => s.id === session.id)
-          if (i >= 0) {
-            if (session.status === 'closed') {
-              return cur.filter((existing) => existing.id !== session.id)
-            }
-            const n = [...cur]
-            n[i] = session
-            return n
-          }
-          if (session.status === 'closed') {
-            return cur
-          }
-          if (!workspaceExists) {
-            return cur
-          }
-          return [...cur, session]
-        })
-      }),
-      sentinelBridge.onSessionDiff((u) => {
-        setSessionDiffs((cur) => ({ ...cur, [u.sessionId]: u.modifiedPaths }))
-      }),
-      sentinelBridge.onSessionHistory((u) => {
-        setSessionHistories((cur) => ({ ...cur, [u.sessionId]: u.entries }))
-      }),
-      sentinelBridge.onSessionMetrics((u) => {
-        setSessions((cur) => {
-          const i = cur.findIndex((s) => s.id === u.sessionId)
-          if (i >= 0 && cur[i].status !== 'closed') {
-            const n = [...cur]
-            n[i] = { ...n[i], metrics: u.metrics, pid: u.pid ?? n[i].pid }
-            return n
-          }
-          return cur
-        })
-      }),
-      sentinelBridge.onIdeTerminalState(setIdeTerminalState),
-      sentinelBridge.onTabState((update) => {
-        setTabs((cur) => {
-          const workspaceExists = workspacesRef.current.some(
-            (workspace) => workspace.id === update.workspaceId
-          )
-          const existing = cur.find((t) => t.id === update.tabId)
-          if (existing) {
-            if (update.status === 'closed') {
-              return cur.filter((t) => t.id !== update.tabId)
-            }
-            return cur.map((t) =>
-              t.id === update.tabId
-                ? {
-                    ...t,
-                    status: update.status,
-                    pid: update.pid ?? t.pid,
-                    exitCode: update.exitCode ?? t.exitCode,
-                    error: update.error ?? t.error
-                  }
-                : t
-            )
-          }
-          if (!workspaceExists || update.status === 'closed') {
-            return cur
-          }
-          return cur
-        })
-      }),
-      sentinelBridge.onTabMetrics((update) => {
-        setTabs((curTabs) => {
-          const i = curTabs.findIndex((t) => t.id === update.tabId)
-          if (i >= 0 && curTabs[i].status !== 'closed') {
-            const n = [...curTabs]
-            n[i] = { ...n[i], metrics: update.metrics, pid: update.pid ?? n[i].pid }
-            return n
-          }
-          return curTabs
-        })
-      })
-    ]
-
-    async function init() {
-      try {
-        const payload = await sentinelBridge.bootstrap()
-        if (disposed) return
-        setProject(payload.project)
-        setWorkspaces(sortWorkspaces(payload.workspaces))
-        setActiveWorkspaceId(payload.activeWorkspaceId ?? null)
-        setSessions(payload.sessions)
-        setWorkspaceSummary(payload.summary)
-        setActivityLog(payload.activityLog)
-        setDefaultSessionStrategy(payload.preferences.defaultSessionStrategy)
-        setIdeTerminalState(payload.ideTerminal)
-        setWindowsBuildNumber(payload.windowsBuildNumber)
-
-        const histories: Record<string, SessionCommandEntry[]> = {}
-        for (const u of payload.histories) histories[u.sessionId] = u.entries
-        setSessionHistories(histories)
-
-        const diffs: Record<string, string[]> = {}
-        for (const u of payload.diffs) diffs[u.sessionId] = u.modifiedPaths
-        setSessionDiffs(diffs)
-
-        // Initialize tabs with their metrics
-        const tabsWithMetrics = payload.tabs.map((tab) => {
-          const metrics = payload.tabMetrics.find((m) => m.tabId === tab.id)
-          if (metrics) {
-            return { ...tab, metrics: metrics.metrics, pid: metrics.pid ?? tab.pid }
-          }
-          return tab
-        })
-        setTabs(tabsWithMetrics)
-      } catch (error) {
-        if (disposed) return
-        setErrorMessage(`Failed to initialize Sentinel: ${getErrorMessage(error)}`)
-      }
-    }
-    void init()
-
-    return () => {
-      disposed = true
-      unsubs.forEach((fn) => {
-        try {
-          fn()
-        } catch (error) {
-          console.error('[sentinel] Failed to unsubscribe from event', { error })
-        }
-      })
-    }
-  }, [])
-
-  // Global ResizeObserver to re-fit terminals after any layout change
   useEffect(() => {
     const observer = new ResizeObserver(() => {
       requestTerminalFit()
     })
-    if (shellViewportRef.current) observer.observe(shellViewportRef.current)
+
+    if (shellViewportRef.current) {
+      observer.observe(shellViewportRef.current)
+    }
+
     return () => {
       observer.disconnect()
       if (fitTimerRef.current) {
@@ -350,7 +148,6 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  // Trigger a re-fit when sidebar, console, or active tab changes
   useEffect(() => {
     requestTerminalFit(120)
   }, [sidebarCollapsed, consoleOpen, visibleSessions.length, maximizedSessionId, activeTabId])
@@ -420,35 +217,6 @@ export default function App(): JSX.Element {
     }
   }, [activeIdeTerminalId, ideTabIds, visibleTabs])
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.ctrlKey && e.code === 'KeyK') { e.preventDefault(); setGlobalActionBarOpen((v) => !v); return }
-      if (e.ctrlKey && !e.altKey && !e.shiftKey) {
-        if (e.code === 'Backquote') {
-          e.preventDefault()
-          toggleIdeTerminal()
-        }
-        if (e.code === 'KeyJ') {
-          e.preventDefault()
-          setConsoleOpen((v) => !v)
-        }
-      }
-    }
-    window.addEventListener('keydown', onKey, { capture: true })
-    return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [])
-
-  // Sidebar panel imperative API
-  function toggleSidebar() {
-    if (sidebarCollapsed) {
-      sidebarPanelRef.current?.expand()
-    } else {
-      sidebarPanelRef.current?.collapse()
-    }
-    setSidebarCollapsed((v) => !v)
-  }
-
   const toggleIdeTerminal = useCallback(() => {
     setIdeTerminalCollapsed((current) => {
       if (current) {
@@ -460,10 +228,24 @@ export default function App(): JSX.Element {
     })
   }, [])
 
-  async function handleOpenProject() {
-    const sentinel = getSentinelBridge()
+  useKeyboardShortcuts({
+    onToggleConsole: () => setConsoleOpen((value) => !value),
+    onToggleGlobalActionBar: () => setGlobalActionBarOpen((value) => !value),
+    onToggleIdeTerminal: toggleIdeTerminal
+  })
+
+  function toggleSidebar(): void {
+    if (sidebarCollapsed) {
+      sidebarPanelRef.current?.expand()
+    } else {
+      sidebarPanelRef.current?.collapse()
+    }
+    setSidebarCollapsed((value) => !value)
+  }
+
+  async function handleOpenProject(): Promise<void> {
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
 
@@ -475,8 +257,7 @@ export default function App(): JSX.Element {
       }
       setProject(nextProject)
       setSelectedFile(null)
-    }
-    catch (error) {
+    } catch (error) {
       const message = getErrorMessage(error)
       if (message !== 'Dialog cancelled') {
         setErrorMessage(`Failed to open project: ${message}`)
@@ -484,27 +265,55 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function handleRefreshProject() {
-    if (!project.path) return
-    const sentinel = getSentinelBridge()
-    if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
+  async function handleRefreshProject(): Promise<void> {
+    if (!project.path) {
       return
     }
+
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
     setRefreshingProject(true)
-    try { setProject(await sentinel.refreshProject()) }
-    catch (error) { setErrorMessage(`Failed to refresh: ${getErrorMessage(error)}`) }
-    finally { setRefreshingProject(false) }
+    try {
+      setProject(await sentinel.refreshProject())
+    } catch (error) {
+      setErrorMessage(`Failed to refresh: ${getErrorMessage(error)}`)
+    } finally {
+      setRefreshingProject(false)
+    }
   }
 
-  async function handleSwitchWorkspace(workspaceId: string) {
+  async function handleWorkspaceAction(
+    workspaceId: string,
+    action: WorkspaceAction
+  ): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      if (action === 'delete') {
+        await sentinel.closeWorkspace(workspaceId, true)
+      } else if (action === 'stop') {
+        await sentinel.stopWorkspace(workspaceId)
+      } else {
+        await sentinel.pauseWorkspace(workspaceId)
+      }
+    } catch (error) {
+      setErrorMessage(`Failed to ${action} workspace: ${getErrorMessage(error)}`)
+    }
+  }
+
+  async function handleSwitchWorkspace(workspaceId: string): Promise<void> {
     if (workspaceId === activeWorkspaceId) {
       return
     }
 
-    const sentinel = getSentinelBridge()
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
 
@@ -517,49 +326,57 @@ export default function App(): JSX.Element {
     }
   }
 
-
-
-  async function handleCreateSession() {
-    if (!activeWorkspace || !project.path) return
-    const sentinel = getSentinelBridge()
-    if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
+  async function handleCreateSession(): Promise<void> {
+    if (!activeWorkspace || !project.path) {
       return
     }
 
-    try { await sentinel.createSession({ workspaceStrategy: defaultSessionStrategy }) }
-    catch (error) { setErrorMessage(`Failed to start session: ${getErrorMessage(error)}`) }
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.createSession({ workspaceStrategy: defaultSessionStrategy })
+    } catch (error) {
+      setErrorMessage(`Failed to start session: ${getErrorMessage(error)}`)
+    }
   }
 
-  async function handleCloseSession(sessionId: string) {
-    if (maximizedSessionId === sessionId) setMaximizedSessionId(null)
-    const sentinel = getSentinelBridge()
+  async function handleCloseSession(sessionId: string): Promise<void> {
+    if (maximizedSessionId === sessionId) {
+      setMaximizedSessionId(null)
+    }
+
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
+
     try {
       await sentinel.closeSession(sessionId)
       clearSessionOutput(sessionId)
-      setSessions((cur) => cur.filter((session) => session.id !== sessionId))
-      setSessionHistories((cur) => {
-        const next = { ...cur }
+      setSessions((current) => current.filter((session) => session.id !== sessionId))
+      setSessionHistories((current) => {
+        const next = { ...current }
         delete next[sessionId]
         return next
       })
-      setSessionDiffs((cur) => {
-        const next = { ...cur }
+      setSessionDiffs((current) => {
+        const next = { ...current }
         delete next[sessionId]
         return next
       })
+    } catch (error) {
+      setErrorMessage(`Failed to close session: ${getErrorMessage(error)}`)
     }
-    catch (error) { setErrorMessage(`Failed to close session: ${getErrorMessage(error)}`) }
   }
 
-  async function handleChangeDefaultSessionStrategy(strategy: SessionWorkspaceStrategy) {
-    const sentinel = getSentinelBridge()
+  async function handleChangeDefaultSessionStrategy(
+    strategy: SessionWorkspaceStrategy
+  ): Promise<void> {
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
 
@@ -571,36 +388,57 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function handleCreateStandaloneTerminal() {
-    if (!activeWorkspace) return
-    const sentinel = getSentinelBridge()
+  async function handleCreateStandaloneTerminal(): Promise<void> {
+    if (!activeWorkspace) {
+      return
+    }
+
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
 
     try {
       const newTab = await sentinel.createStandaloneTerminal(undefined, undefined, 80, 24)
-      setTabs((cur) => [...cur, newTab])
+      setTabs((current) => [...current, newTab])
       setActiveTabId(newTab.id)
     } catch (error) {
       setErrorMessage(`Failed to create terminal: ${getErrorMessage(error)}`)
     }
   }
 
-  async function handleCloseTab(tabId: string) {
-    const sentinel = getSentinelBridge()
+  async function handleCreateIdeTerminal(): Promise<void> {
+    const sentinel = requireSentinelBridge()
     if (!sentinel) {
-      setErrorMessage(missingBridgeMessage())
       return
     }
 
-    // Find the tab before removal in case we need to restore it
-    const tabToClose = tabs.find((t) => t.id === tabId)
-    if (!tabToClose) return
+    try {
+      const newTab = await sentinel.createStandaloneTerminal(
+        ideTerminalState?.workspacePath,
+        undefined,
+        80,
+        24
+      )
+      setIdeTabIds((current) => [...current, newTab.id])
+      setTabs((current) => [...current, newTab])
+      setActiveIdeTerminalId(newTab.id)
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    }
+  }
 
-    // Optimistically remove the tab so it never becomes a zombie, even if
-    // the backend errors (e.g. process already exited before user clicked X).
+  async function handleCloseTab(tabId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    const tabToClose = tabs.find((tab) => tab.id === tabId)
+    if (!tabToClose) {
+      return
+    }
+
     setTabs((currentTabs) => currentTabs.filter((tab) => tab.id !== tabId))
     setIdeTabIds((current) => current.filter((id) => id !== tabId))
     clearTabOutput(tabId)
@@ -608,37 +446,20 @@ export default function App(): JSX.Element {
     try {
       await sentinel.closeTab(tabId)
     } catch (error) {
-      // Only surface the error if it isn't "Tab not found" — that just means
-      // the process already exited cleanly before we sent the close request.
-      const msg = getErrorMessage(error)
-      if (msg.toLowerCase().includes('not found')) {
-        // Tab not found is expected - clean close
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
         return
       }
 
-      // For other errors, restore the tab to the UI since close failed
       setTabs((currentTabs) => {
-        if (currentTabs.some((t) => t.id === tabId)) {
-          // Already restored somehow, don't re-add
+        if (currentTabs.some((tab) => tab.id === tabId)) {
           return currentTabs
         }
         return [...currentTabs, tabToClose]
       })
-      setErrorMessage(`Failed to close tab: ${msg}`)
+      setErrorMessage(`Failed to close tab: ${message}`)
     }
   }
-
-  const globalActions = [
-    { id: 'new-agent', label: 'New Agent', icon: <Plus className="h-4 w-4" />, execute: () => void handleCreateSession() },
-    { id: 'open-project', label: 'Open Repository', icon: <FolderOpen className="h-4 w-4" />, execute: () => void handleOpenProject() },
-    { id: 'refresh-project', label: 'Refresh Tree', icon: <RefreshCw className="h-4 w-4" />, execute: () => void handleRefreshProject() },
-    { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: <PanelLeft className="h-4 w-4" />, execute: toggleSidebar },
-    { id: 'toggle-console', label: 'Toggle Console', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setConsoleOpen((v) => !v) },
-    { id: 'sandbox-mode', label: 'Use Sandbox Copy', icon: <TerminalSquare className="h-4 w-4" />, execute: () => void handleChangeDefaultSessionStrategy('sandbox-copy') },
-    { id: 'worktree-mode', label: 'Use Git Worktree', icon: <TerminalSquare className="h-4 w-4" />, execute: () => void handleChangeDefaultSessionStrategy('git-worktree') },
-    { id: 'ide-mode', label: 'Switch to IDE Mode', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setGlobalMode('ide') },
-    { id: 'multiplex-mode', label: 'Switch to Multiplex Mode', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setGlobalMode('multiplex') },
-  ]
 
   const hasProject = Boolean(project.path) && Boolean(activeWorkspace)
   const overlayFiles = buildWorkspaceOverlayFiles({
@@ -661,122 +482,59 @@ export default function App(): JSX.Element {
       ? visibleTabs.find((tab) => tab.id === activeTabId) ?? null
       : null
 
-  const multiplexContent = !hasProject ? (
-    <div className="flex h-full items-center justify-center">
-      <div className="max-w-xs text-center p-8 border border-white/10 bg-white/[0.02]">
-        <FolderOpen className="mx-auto mb-4 h-10 w-10 text-sentinel-mist/40" />
-        <h2 className="mb-2 text-base font-bold text-white/90">Open a Repository</h2>
-        <p className="mb-6 text-sm text-sentinel-mist">Select a project folder to start sandbox-copy or Git worktree agent sessions.</p>
-        <button
-          className="inline-flex h-9 w-full items-center justify-center gap-2 bg-white text-sm font-bold text-sentinel-ink hover:bg-white/90 transition"
-          onClick={() => void handleOpenProject()}
-        >
-          Open Project
-        </button>
-      </div>
-    </div>
-  ) : visibleSessions.length === 0 ? (
-    <div className="flex h-full items-center justify-center text-center text-sentinel-mist">
-      <div>
-        <TerminalSquare className="mx-auto mb-4 h-10 w-10 opacity-30" />
-        <p className="text-sm">No active agents yet. Start one with <strong className="text-white">New Agent</strong> using the workspace strategy selected in the sidebar.</p>
-      </div>
-    </div>
-  ) : (
-    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-sentinel-mist">Loading...</div>}>
-      <AgentDashboard
-        fitNonce={fitNonce}
-        histories={sessionHistories}
-        sessionDiffs={sessionDiffs}
-        maximizedSessionId={maximizedSessionId}
-        onClose={handleCloseSession}
-        onToggleMaximize={(id) => setMaximizedSessionId((c) => c === id ? null : id)}
-        sessions={visibleSessions}
-        windowsBuildNumber={windowsBuildNumber}
-      />
-    </Suspense>
+  const multiplexContent = (
+    <MultiplexWorkspaceView
+      fitNonce={fitNonce}
+      hasProject={hasProject}
+      histories={sessionHistories}
+      maximizedSessionId={maximizedSessionId}
+      onCloseSession={handleCloseSession}
+      onOpenProject={() => { void handleOpenProject() }}
+      onToggleMaximize={(id) => setMaximizedSessionId((current) => current === id ? null : id)}
+      sessionDiffs={sessionDiffs}
+      sessions={visibleSessions}
+      windowsBuildNumber={windowsBuildNumber}
+    />
   )
 
   const ideContent = (
-    <Group orientation="vertical">
-      <Panel defaultSize={65} minSize={20} className="min-h-0">
-        <CodePreview
-          selectedFile={selectedFile}
-          projectPath={project.path}
-          ideTerminalState={ideTerminalState}
-          onClose={() => setSelectedFile(null)}
-          ideTerminalCollapsed={ideTerminalCollapsed}
-          onToggleIdeTerminal={toggleIdeTerminal}
-        />
-      </Panel>
-      <Separator
-        className={`relative bg-transparent transition-[height,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          ideTerminalCollapsed
-            ? 'pointer-events-none h-0 opacity-0'
-            : 'h-[3px] opacity-100 hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40 cursor-row-resize'
-        }`}
-      />
-      <Panel
-        panelRef={ideTerminalPanelRef}
-        defaultSize={35}
-        minSize={10}
-        collapsible
-        collapsedSize={0}
-        className="min-h-0 transition-[flex-basis,height,max-height,min-height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        style={{ overflow: 'hidden' }}
-      >
-        <IdeTerminalGroup
-          projectPath={project.path}
-          windowsBuildNumber={windowsBuildNumber}
-          fitNonce={fitNonce}
-          ideTerminalState={ideTerminalState}
-          tabs={visibleTabs.filter((tab) => ideTabIds.includes(tab.id))}
-          activeTerminalId={activeIdeTerminalId}
-          onSelectTerminal={setActiveIdeTerminalId}
-            onCreateTerminal={async () => {
-              const sentinel = getSentinelBridge()
-              if (!sentinel) return
-              try {
-                const newTab = await sentinel.createStandaloneTerminal(
-                  ideTerminalState?.workspacePath,
-                  undefined,
-                  80,
-                  24
-                )
-                setIdeTabIds((cur) => [...cur, newTab.id])
-                setTabs((cur) => [...cur, newTab])
-                setActiveIdeTerminalId(newTab.id)
-            } catch (err) {
-              setErrorMessage(getErrorMessage(err))
-            }
-          }}
-          onCloseTerminal={async (id) => {
-            await handleCloseTab(id)
-            if (activeIdeTerminalId === id) {
-              setActiveIdeTerminalId('ide-workspace')
-            }
-          }}
-          onToggleCollapse={toggleIdeTerminal}
-        />
-      </Panel>
-    </Group>
+    <IdeWorkspaceView
+      activeTerminalId={activeIdeTerminalId}
+      fitNonce={fitNonce}
+      ideTerminalCollapsed={ideTerminalCollapsed}
+      ideTerminalPanelRef={ideTerminalPanelRef}
+      ideTerminalState={ideTerminalState}
+      onCloseSelectedFile={() => setSelectedFile(null)}
+      onCloseTerminal={async (id) => {
+        await handleCloseTab(id)
+        if (activeIdeTerminalId === id) {
+          setActiveIdeTerminalId('ide-workspace')
+        }
+      }}
+      onCreateTerminal={handleCreateIdeTerminal}
+      onSelectTerminal={setActiveIdeTerminalId}
+      onToggleCollapse={toggleIdeTerminal}
+      projectPath={project.path}
+      selectedFile={selectedFile}
+      tabs={visibleTabs.filter((tab) => ideTabIds.includes(tab.id))}
+      windowsBuildNumber={windowsBuildNumber}
+    />
   )
 
+  const globalActions = [
+    { id: 'new-agent', label: 'New Agent', icon: <Plus className="h-4 w-4" />, execute: () => void handleCreateSession() },
+    { id: 'open-project', label: 'Open Repository', icon: <FolderOpen className="h-4 w-4" />, execute: () => void handleOpenProject() },
+    { id: 'refresh-project', label: 'Refresh Tree', icon: <RefreshCw className="h-4 w-4" />, execute: () => void handleRefreshProject() },
+    { id: 'toggle-sidebar', label: 'Toggle Sidebar', icon: <PanelLeft className="h-4 w-4" />, execute: toggleSidebar },
+    { id: 'toggle-console', label: 'Toggle Console', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setConsoleOpen((value) => !value) },
+    { id: 'sandbox-mode', label: 'Use Sandbox Copy', icon: <TerminalSquare className="h-4 w-4" />, execute: () => void handleChangeDefaultSessionStrategy('sandbox-copy') },
+    { id: 'worktree-mode', label: 'Use Git Worktree', icon: <TerminalSquare className="h-4 w-4" />, execute: () => void handleChangeDefaultSessionStrategy('git-worktree') },
+    { id: 'ide-mode', label: 'Switch to IDE Mode', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setGlobalMode('ide') },
+    { id: 'multiplex-mode', label: 'Switch to Multiplex Mode', icon: <TerminalSquare className="h-4 w-4" />, execute: () => setGlobalMode('multiplex') }
+  ]
+
   if (!bridgeAvailable) {
-    return (
-      <div className="flex h-[100dvh] w-screen items-center justify-center overflow-hidden bg-[#060a0f] px-6 text-white">
-        <div className="max-w-xl border border-white/10 bg-black/30 p-6">
-          <div className="text-xs font-semibold uppercase tracking-[0.28em] text-sentinel-mist">Sentinel</div>
-          <h1 className="mt-3 text-xl font-semibold text-white">Desktop Bridge Unavailable</h1>
-          <p className="mt-3 text-sm leading-6 text-sentinel-mist">
-            `window.sentinel` is only initialized when the Sentinel UI is running inside Tauri. If you open the renderer in a normal browser tab, the desktop bridge does not exist.
-          </p>
-          <div className="mt-4 border border-white/10 bg-black/30 px-3 py-3 text-xs text-sentinel-mist">
-            Start Sentinel through Tauri, or add a mocked web bridge for browser-only development.
-          </div>
-        </div>
-      </div>
-    )
+    return <BridgeUnavailableScreen />
   }
 
   return (
@@ -788,215 +546,60 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {/* ============ TOP HEADER — draggable titlebar ============ */}
-      {/*
-       * Layout strategy:
-               *  - The entire bar is draggable
-       *  - Left cluster: sidebar toggle + project info (no-drag)
-       *  - Right: padding-only safe zone (≥140px) for Electron controls (never house buttons there)
-       */}
-      <header
-        className="relative z-20 flex h-11 shrink-0 items-center border-b border-white/10 bg-black/30 px-3"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      >
-        <div
-          className="z-10 flex min-w-0 items-center gap-3 pr-3"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <div className="flex shrink-0 items-center gap-3">
-            <button
-              className="inline-flex h-7 w-7 items-center justify-center text-sentinel-mist transition hover:text-white"
-              onClick={toggleSidebar}
-              title="Toggle sidebar"
-            >
-              <PanelLeft className="h-4 w-4" />
-            </button>
+      <AppHeader
+        activeWorkspaceId={activeWorkspaceId}
+        globalMode={globalMode}
+        hasProject={hasProject}
+        onCreateSession={() => { void handleCreateSession() }}
+        onCreateStandaloneTerminal={() => { void handleCreateStandaloneTerminal() }}
+        onOpenProject={() => { void handleOpenProject() }}
+        onSwitchWorkspace={(workspaceId) => { void handleSwitchWorkspace(workspaceId) }}
+        onToggleSidebar={toggleSidebar}
+        onWorkspaceAction={(workspaceId, action) => { void handleWorkspaceAction(workspaceId, action) }}
+        project={project}
+        workspaces={workspaces}
+      />
 
-            <span className="whitespace-nowrap text-sm font-semibold tracking-tight text-white/90">
-              Sentinel
-            </span>
-          </div>
+      <AppWorkspacePanels
+        activeStandaloneTab={activeStandaloneTab}
+        activeTabId={activeTabId}
+        activeWorkspaceId={activeWorkspaceId}
+        consoleOpen={consoleOpen}
+        defaultSessionStrategy={defaultSessionStrategy}
+        diffBadges={diffBadges}
+        fitNonce={fitNonce}
+        globalMode={globalMode}
+        ideContent={ideContent}
+        ideTabIds={ideTabIds}
+        keepIdeMounted={keepIdeMounted}
+        multiplexContent={multiplexContent}
+        onChangeDefaultSessionStrategy={(strategy) => { void handleChangeDefaultSessionStrategy(strategy) }}
+        onFileSelect={(file) => {
+          setSelectedFile(file)
+          setGlobalMode('ide')
+        }}
+        onOpenProject={() => { void handleOpenProject() }}
+        onRefreshProject={() => { void handleRefreshProject() }}
+        onTabClose={(tabId) => { void handleCloseTab(tabId) }}
+        onTabSelect={setActiveTabId}
+        onToggleConsole={() => setConsoleOpen((value) => !value)}
+        onToggleGlobalMode={setGlobalMode}
+        onToggleSidebar={toggleSidebar}
+        onToggleStatusBarCollapse={() => setStatusBarCollapsed((value) => !value)}
+        onWorkspaceAction={(workspaceId, action) => { void handleWorkspaceAction(workspaceId, action) }}
+        overlayFiles={overlayFiles}
+        project={project}
+        refreshingProject={refreshingProject}
+        selectedFile={selectedFile}
+        shellViewportRef={shellViewportRef}
+        sidebarCollapsed={sidebarCollapsed}
+        sidebarPanelRef={sidebarPanelRef}
+        statusBarCollapsed={statusBarCollapsed}
+        summary={workspaceSummary}
+        visibleTabs={visibleTabs}
+        windowsBuildNumber={windowsBuildNumber}
+      />
 
-          <div className="min-w-0 flex-1 max-w-[480px]">
-            <WorkspaceSwitcher
-              activeWorkspaceId={activeWorkspaceId}
-              onCreateWorkspace={() => void handleOpenProject()}
-              onSwitchWorkspace={(workspaceId) => void handleSwitchWorkspace(workspaceId)}
-              onWorkspaceAction={(workspaceId, action) => {
-                const sentinel = getSentinelBridge()
-                if (!sentinel) return
-
-                if (action === 'delete') {
-                  sentinel.closeWorkspace(workspaceId, true).catch(console.error)
-                } else if (action === 'stop') {
-                  sentinel.stopWorkspace(workspaceId).catch(console.error)
-                } else if (action === 'pause') {
-                  sentinel.pauseWorkspace(workspaceId).catch(console.error)
-                }
-              }}
-              workspaces={workspaces}
-            />
-          </div>
-
-          {project.name && (
-            <div className="hidden min-w-0 items-center gap-1.5 border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-sentinel-mist xl:flex">
-              <GitBranch className="h-3 w-3 shrink-0" />
-              <span className="truncate max-w-[220px]">{project.name}</span>
-              {project.branch && <span className="text-sentinel-mist/55">·</span>}
-              {project.branch && <span className="truncate max-w-[140px]">{project.branch}</span>}
-            </div>
-          )}
-
-          {/* Action buttons — moved to left corner, away from native controls */}
-          {globalMode !== 'ide' && (
-            <div 
-              className="ml-4 flex shrink-0 items-center gap-2" 
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            >
-              <div className="flex items-center rounded-md border border-white/10 bg-black/40 p-0.5 shadow-sm">
-                <button
-                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[11px] font-semibold text-sentinel-mist transition-colors hover:bg-white/[0.08] hover:text-white"
-                  onClick={() => void handleCreateStandaloneTerminal()}
-                  title="New Terminal"
-                >
-                  <TerminalSquare className="h-3.5 w-3.5 text-white/55" />
-                  <span className="hidden xl:inline">New Terminal</span>
-                </button>
-                
-                <div className="mx-0.5 h-3.5 w-px bg-white/10" />
-                
-                <button
-                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[11px] font-semibold text-sentinel-accent transition-colors hover:bg-sentinel-accent/20 disabled:opacity-40"
-                  disabled={!hasProject}
-                  onClick={() => void handleCreateSession()}
-                  title="New Agent"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span className="hidden xl:inline">New Agent</span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="ml-auto w-[140px] shrink-0" />
-      </header>
-
-      {/* ============ BODY ============ */}
-      <div className="flex flex-1 min-h-0 overflow-hidden" ref={shellViewportRef}>
-
-        {/* Resizable panel group: Sidebar | Main */}
-        <Group orientation="horizontal">
-          <Panel
-            panelRef={sidebarPanelRef}
-            defaultSize={18}
-            minSize={0}
-            collapsible
-            collapsedSize={0}
-            className="transition-[flex-basis,width,max-width,min-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-            style={{ overflow: 'hidden' }}
-          >
-            <Sidebar
-              collapsed={sidebarCollapsed}
-              diffBadges={diffBadges}
-              overlayFiles={overlayFiles}
-              defaultSessionStrategy={defaultSessionStrategy}
-              selectedFileProjectPath={selectedFile?.projectPath}
-              onOpenProject={handleOpenProject}
-              onRefreshProject={handleRefreshProject}
-              onChangeDefaultSessionStrategy={(strategy) => { void handleChangeDefaultSessionStrategy(strategy) }}
-              onToggleCollapse={toggleSidebar}
-              project={project}
-              refreshing={refreshingProject}
-              onFileSelect={(file) => { setSelectedFile(file); setGlobalMode('ide') }}
-              globalMode={globalMode}
-              onToggleGlobalMode={setGlobalMode}
-              onWorkspaceAction={(action) => {
-                const sentinel = getSentinelBridge()
-                if (!sentinel || !activeWorkspaceId) return
-
-                if (action === 'delete') {
-                  sentinel.closeWorkspace(activeWorkspaceId, true).catch(console.error)
-                } else if (action === 'stop') {
-                  sentinel.stopWorkspace(activeWorkspaceId).catch(console.error)
-                } else if (action === 'pause') {
-                  sentinel.pauseWorkspace(activeWorkspaceId).catch(console.error)
-                }
-              }}
-            />
-          </Panel>
-
-          <Separator
-            className={`relative bg-transparent transition-[width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-              sidebarCollapsed
-                ? 'pointer-events-none w-0 opacity-0'
-                : 'w-[3px] opacity-100 hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40'
-            }`}
-          />
-
-          <Panel className="flex flex-col min-h-0 min-w-0" defaultSize={82}>
-            {/* Tab Bar - Hidden in IDE mode to save vertical space */}
-            {globalMode !== 'ide' && (
-              <WorkspaceTabs
-                tabs={visibleTabs.filter((tab) => !ideTabIds.includes(tab.id))}
-                activeTabId={activeTabId}
-                onTabSelect={setActiveTabId}
-                onTabClose={handleCloseTab}
-              />
-            )}
-
-            {/* Tab Content */}
-            <div className="relative flex-1 min-h-0 overflow-hidden">
-              {/* Dashboard Tab */}
-              <div
-                className={`absolute inset-0 min-h-0 overflow-hidden ${
-                  activeTabId === 'dashboard' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-                }`}
-              >
-                {multiplexContent}
-              </div>
-
-              {/* Active Terminal Tab */}
-              {activeStandaloneTab && (
-                <div className="absolute inset-0 min-h-0 overflow-hidden opacity-100 z-10">
-                  <StandaloneTerminalTile
-                    key={activeStandaloneTab.id}
-                    tab={activeStandaloneTab}
-                    fitNonce={fitNonce}
-                    onClose={() => handleCloseTab(activeStandaloneTab.id)}
-                    windowsBuildNumber={windowsBuildNumber}
-                  />
-                </div>
-              )}
-
-              {/* IDE Mode (Global) */}
-              {(keepIdeMounted || globalMode === 'ide') && (
-                <div
-                  aria-hidden={globalMode !== 'ide'}
-                  className={`absolute inset-0 min-h-0 overflow-hidden transition-opacity duration-150 ${
-                    globalMode === 'ide' ? 'opacity-100 z-20' : 'opacity-0 z-0 pointer-events-none'
-                  }`}
-                >
-                  {ideContent}
-                </div>
-              )}
-            </div>
-
-            {/* ---- STATUS BAR ---- */}
-            <StatusBar
-              consoleOpen={consoleOpen}
-              defaultSessionStrategy={defaultSessionStrategy}
-              onToggleConsole={() => setConsoleOpen((v) => !v)}
-              summary={workspaceSummary}
-              focusedTab={activeStandaloneTab}
-              collapsed={statusBarCollapsed}
-              onToggleCollapse={() => setStatusBarCollapsed((s) => !s)}
-            />
-          </Panel>
-        </Group>
-      </div>
-
-      {/* ============ CONSOLE DRAWER ============ */}
       <div
         className={`fixed inset-x-0 bottom-0 z-40 flex h-[36vh] flex-col overflow-hidden bg-[#060c14]/98 shadow-2xl backdrop-blur-2xl transition-transform duration-300 ease-in-out ${
           consoleOpen ? 'translate-y-0 border-t border-sentinel-accent/20' : 'translate-y-full'
@@ -1004,16 +607,15 @@ export default function App(): JSX.Element {
       >
         <ConsoleDrawer
           entries={activityLog}
+          onToggleOpen={() => setConsoleOpen((value) => !value)}
           open={consoleOpen}
-          onToggleOpen={() => setConsoleOpen((v) => !v)}
         />
       </div>
 
-      {/* ============ GLOBAL ACTION BAR ============ */}
       <GlobalActionBar
+        actions={globalActions}
         isOpen={globalActionBarOpen}
         onClose={() => setGlobalActionBarOpen(false)}
-        actions={globalActions}
       />
     </div>
   )
