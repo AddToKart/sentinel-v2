@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Editor, { DiffEditor } from '@monaco-editor/react'
-import { Code2, Diff, FileCode2, Save, X } from 'lucide-react'
+import { Code2, Diff, FileCode2, Save, X, TerminalSquare } from 'lucide-react'
 import type { IdeTerminalState } from '@shared/types'
 import { getErrorMessage } from '../error-utils'
 import type { SelectedFileEntry } from '../workspace-overlay'
@@ -10,6 +10,8 @@ interface CodePreviewProps {
   projectPath: string | undefined
   ideTerminalState: IdeTerminalState
   onClose: () => void
+  ideTerminalCollapsed?: boolean
+  onToggleIdeTerminal?: () => void
 }
 
 type ViewTab = 'edit' | 'diff'
@@ -41,7 +43,7 @@ function joinWorkspacePath(workspacePath: string, relativePath: string): string 
   return `${workspacePath.replace(/[\/\\]$/, '')}\\${normalizedRelativePath}`
 }
 
-export function CodePreview({ selectedFile, projectPath, ideTerminalState, onClose }: CodePreviewProps): JSX.Element {
+export function CodePreview({ selectedFile, projectPath, ideTerminalState, onClose, ideTerminalCollapsed, onToggleIdeTerminal }: CodePreviewProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ViewTab>('edit')
   const [editContent, setEditContent] = useState('')
   const [originalContent, setOriginalContent] = useState('')
@@ -178,6 +180,22 @@ export function CodePreview({ selectedFile, projectPath, ideTerminalState, onClo
             IDE Workspace
           </div>
           {saveError && <span className="text-[10px] text-rose-300">{saveError}</span>}
+          
+          {onToggleIdeTerminal && (
+            <button
+              onClick={onToggleIdeTerminal}
+              className={`inline-flex items-center gap-1.5 border px-2 py-1 text-[11px] transition ${
+                ideTerminalCollapsed
+                  ? 'border-sentinel-accent/40 bg-sentinel-accent/10 text-white shadow-inner'
+                  : 'border-white/10 bg-white/[0.04] text-sentinel-mist hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
+              }`}
+              title={ideTerminalCollapsed ? 'Show IDE Terminal' : 'Hide IDE Terminal'}
+            >
+              <TerminalSquare className="h-3 w-3" />
+              Terminal
+            </button>
+          )}
+
           <button
             onClick={() => { void handleSave() }}
             className="inline-flex items-center gap-1.5 border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-sentinel-mist transition hover:border-sentinel-accent/40 hover:text-white disabled:opacity-40"

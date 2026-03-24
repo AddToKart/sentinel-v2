@@ -92,8 +92,10 @@ export default function App(): JSX.Element {
   // Tab state
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
+  const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
+  const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const bridgeAvailable = Boolean(getSentinelBridge())
@@ -310,6 +312,15 @@ export default function App(): JSX.Element {
       sidebarPanelRef.current?.collapse()
     }
     setSidebarCollapsed((v) => !v)
+  }
+
+  function toggleIdeTerminal() {
+    if (ideTerminalCollapsed) {
+      ideTerminalPanelRef.current?.expand()
+    } else {
+      ideTerminalPanelRef.current?.collapse()
+    }
+    setIdeTerminalCollapsed((v) => !v)
   }
 
   async function handleOpenProject() {
@@ -534,15 +545,32 @@ export default function App(): JSX.Element {
           projectPath={project.path}
           ideTerminalState={ideTerminalState}
           onClose={() => setSelectedFile(null)}
+          ideTerminalCollapsed={ideTerminalCollapsed}
+          onToggleIdeTerminal={toggleIdeTerminal}
         />
       </Panel>
-      <Separator className="h-[3px] bg-transparent hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40 transition-colors cursor-row-resize" />
-      <Panel defaultSize={35} minSize={10} className="min-h-0">
+      <Separator
+        className={`relative bg-transparent transition-[height,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          ideTerminalCollapsed
+            ? 'pointer-events-none h-0 opacity-0'
+            : 'h-[3px] opacity-100 hover:bg-sentinel-accent/20 active:bg-sentinel-accent/40 cursor-row-resize'
+        }`}
+      />
+      <Panel
+        panelRef={ideTerminalPanelRef}
+        defaultSize={35}
+        minSize={10}
+        collapsible
+        collapsedSize={0}
+        className="min-h-0 transition-[flex-basis,height,max-height,min-height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ overflow: 'hidden' }}
+      >
         <IdeTerminalPanel
           fitNonce={fitNonce}
           projectPath={project.path}
           terminalState={ideTerminalState}
           windowsBuildNumber={windowsBuildNumber}
+          onClose={toggleIdeTerminal}
         />
       </Panel>
     </Group>
@@ -683,13 +711,15 @@ export default function App(): JSX.Element {
           />
 
           <Panel className="flex flex-col min-h-0 min-w-0" defaultSize={82}>
-            {/* Tab Bar */}
-            <WorkspaceTabs
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onTabSelect={setActiveTabId}
-              onTabClose={handleCloseTab}
-            />
+            {/* Tab Bar - Hidden in IDE mode to save vertical space */}
+            {globalMode !== 'ide' && (
+              <WorkspaceTabs
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onTabSelect={setActiveTabId}
+                onTabClose={handleCloseTab}
+              />
+            )}
 
             {/* Tab Content */}
             <div className="relative flex-1 min-h-0 overflow-hidden">
