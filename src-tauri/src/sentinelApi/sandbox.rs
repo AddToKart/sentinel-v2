@@ -133,14 +133,16 @@ fn collect_copy_plan_recursive(
                 continue;
             }
 
-            directories.push(target_path);
-            collect_copy_plan_recursive(
-                project_root,
-                workspace_path,
-                Some(&relative_path),
-                directories,
-                files,
-            )?;
+            if should_traverse_directory(&entry_path, &file_type) {
+                directories.push(target_path);
+                collect_copy_plan_recursive(
+                    project_root,
+                    workspace_path,
+                    Some(&relative_path),
+                    directories,
+                    files,
+                )?;
+            }
             continue;
         }
 
@@ -243,7 +245,9 @@ fn list_tracked_files_recursive(
             if should_skip_directory(&name) || should_link_directory(&name) {
                 continue;
             }
-            list_tracked_files_recursive(root_path, &path, files)?;
+            if should_traverse_directory(&path, &file_type) {
+                list_tracked_files_recursive(root_path, &path, files)?;
+            }
             continue;
         }
 
@@ -371,6 +375,19 @@ fn create_sandbox_workspace(
     let (baseline_hashes, scan_cache) = copy_project_tree(project_root, workspace_path, None)?;
     let _ = ensure_shared_directories(project_root, workspace_path);
 
+    Ok(SandboxWorkspaceState {
+        baseline_hashes,
+        scan_cache,
+        project_root: Some(path_to_string(project_root)),
+    })
+}
+
+fn restore_sandbox_workspace_state(
+    project_root: &Path,
+    workspace_path: &Path,
+) -> Result<SandboxWorkspaceState, String> {
+    let baseline_hashes = snapshot_project_hashes(project_root)?;
+    let scan_cache = snapshot_workspace_files(workspace_path, None)?;
     Ok(SandboxWorkspaceState {
         baseline_hashes,
         scan_cache,

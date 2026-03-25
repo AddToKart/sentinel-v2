@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Database row structs — separate from the API-facing models in `models.rs`.
 /// These derive `sqlx::FromRow` for direct mapping from query results.
 
@@ -14,6 +16,12 @@ pub struct WorkspaceRow {
     pub last_active_at: i64,
     pub is_active: i64,
     pub metadata: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WorkspaceMemberRow {
+    pub id: String,
+    pub workspace_id: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

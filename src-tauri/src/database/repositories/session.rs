@@ -1,4 +1,4 @@
-use crate::database::db_models::SessionRow;
+use crate::database::db_models::{SessionRow, WorkspaceMemberRow};
 use crate::models::{CleanupState, SessionStatus, SessionSummary};
 use sqlx::SqlitePool;
 
@@ -68,7 +68,17 @@ impl SessionRepository {
         sqlx::query(
             r#"
             UPDATE sessions SET
-                status = ?2, cleanup_state = ?3, exit_code = ?4, error_message = ?5
+                status = ?2,
+                cleanup_state = ?3,
+                exit_code = ?4,
+                error_message = ?5,
+                process_id = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN NULL ELSE process_id END,
+                cpu_percent = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN 0.0 ELSE cpu_percent END,
+                memory_mb = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN 0.0 ELSE memory_mb END,
+                thread_count = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN 0 ELSE thread_count END,
+                handle_count = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN 0 ELSE handle_count END,
+                process_count = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN 0 ELSE process_count END,
+                last_metrics_update = CASE WHEN ?2 IN ('paused', 'closed', 'error') THEN NULL ELSE last_metrics_update END
             WHERE id = ?1
             "#,
         )
@@ -140,7 +150,7 @@ impl SessionRepository {
 
     pub async fn find_active(pool: &SqlitePool) -> Result<Vec<SessionRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, SessionRow>(
-            "SELECT * FROM sessions WHERE status NOT IN ('closed', 'error') ORDER BY created_at DESC",
+            "SELECT * FROM sessions WHERE status NOT IN ('paused', 'closed', 'error') ORDER BY created_at DESC",
         )
         .fetch_all(pool)
         .await?;
@@ -148,32 +158,47 @@ impl SessionRepository {
     }
 
     pub async fn find_all(pool: &SqlitePool) -> Result<Vec<SessionRow>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, SessionRow>(
-            "SELECT * FROM sessions ORDER BY created_at DESC",
-        )
-        .fetch_all(pool)
-        .await?;
+        let rows =
+            sqlx::query_as::<_, SessionRow>("SELECT * FROM sessions ORDER BY created_at DESC")
+                .fetch_all(pool)
+                .await?;
         Ok(rows)
     }
 
-    pub async fn mark_stale_as_error(
+    pub async fn find_workspace_memberships(
         pool: &SqlitePool,
-        error_message: &str,
+    ) -> Result<Vec<WorkspaceMemberRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, WorkspaceMemberRow>("SELECT id, workspace_id FROM sessions")
+            .fetch_all(pool)
+            .await?;
+        Ok(rows)
+    }
+
+    pub async fn mark_stale_as_paused(
+        pool: &SqlitePool,
+        pause_message: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE sessions
             SET
-                status = 'error',
+                status = 'paused',
                 cleanup_state = CASE
                     WHEN cleanup_state = 'active' THEN 'preserved'
                     ELSE cleanup_state
                 END,
-                error_message = COALESCE(error_message, ?1)
-            WHERE status NOT IN ('closed', 'error')
+                error_message = COALESCE(error_message, ?1),
+                process_id = NULL,
+                cpu_percent = 0.0,
+                memory_mb = 0.0,
+                thread_count = 0,
+                handle_count = 0,
+                process_count = 0,
+                last_metrics_update = NULL
+            WHERE status NOT IN ('paused', 'closed', 'error')
             "#,
         )
-        .bind(error_message)
+        .bind(pause_message)
         .execute(pool)
         .await?;
         Ok(())
@@ -193,6 +218,7 @@ fn session_status_to_str(s: SessionStatus) -> &'static str {
         SessionStatus::Starting => "starting",
         SessionStatus::Ready => "ready",
         SessionStatus::Closing => "closing",
+        SessionStatus::Paused => "paused",
         SessionStatus::Closed => "closed",
         SessionStatus::Error => "error",
     }

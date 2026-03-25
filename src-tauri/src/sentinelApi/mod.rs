@@ -1,12 +1,11 @@
 use crate::models::{
     ActivityLogEntry, AuditLogEntry, BootstrapPayload, CleanupState, CommandHistoryEntry,
-    CreateSessionInput, FileChangeEntry, IdeStatus, IdeTerminalState, ProcessMetrics,
-    ProjectNode, ProjectState, SessionApplyResult, SessionCommandEntry, SessionCommitResult,
-    SessionDiffUpdate, SessionHistoryUpdate, SessionMetricsUpdate, SessionStatus,
-    SessionSummary, SessionSyncConflict, SessionWorkspaceStrategy, SnapshotSummary,
-    TabMetricsUpdate, TabOutputEvent, TabStateUpdate, TabStatus, TabSummary, TabType,
-    WorkspaceAnalytics, WorkspaceContext, WorkspacePreferences, WorkspaceRemovedEvent,
-    WorkspaceSummary,
+    CreateSessionInput, FileChangeEntry, IdeStatus, IdeTerminalState, ProcessMetrics, ProjectNode,
+    ProjectState, SessionApplyResult, SessionCommandEntry, SessionCommitResult, SessionDiffUpdate,
+    SessionHistoryUpdate, SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
+    SessionWorkspaceStrategy, SnapshotSummary, TabMetricsUpdate, TabOutputEvent, TabStateUpdate,
+    TabStatus, TabSummary, TabType, WorkspaceAnalytics, WorkspaceContext, WorkspacePreferences,
+    WorkspaceRemovedEvent, WorkspaceSummary,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -28,6 +27,9 @@ const TREE_DEPTH: usize = 3;
 const TREE_ENTRY_LIMIT: usize = 28;
 const METRIC_INTERVAL_MS: u64 = 1_000;
 const DIFF_INTERVAL_MS: i64 = 2_000;
+const METRIC_PERSIST_INTERVAL_MS: i64 = 3_000;
+const METRIC_PERSIST_CPU_DELTA: f64 = 1.0;
+const METRIC_PERSIST_MEMORY_DELTA_MB: f64 = 4.0;
 const CLOSE_TIMEOUT_MS: u64 = 4_000;
 
 const EVENT_SESSION_OUTPUT: &str = "sentinel:session-output";
@@ -80,6 +82,12 @@ struct TerminalSize {
     rows: u16,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SessionShutdownMode {
+    Stop,
+    Pause,
+}
+
 struct SessionRecord {
     summary: SessionSummary,
     master: SharedMaster,
@@ -95,7 +103,10 @@ struct SessionRecord {
     tracked_process_ids: Vec<u32>,
     last_cpu_total_seconds: Option<f64>,
     last_sampled_at: Option<i64>,
+    last_persisted_metrics: ProcessMetrics,
+    last_persisted_metrics_at: Option<i64>,
     last_diff_scanned_at: Option<i64>,
+    shutdown_mode: SessionShutdownMode,
 }
 
 struct IdeRecord {
@@ -119,6 +130,8 @@ struct TabRecord {
     tracked_process_ids: Vec<u32>,
     last_cpu_total_seconds: Option<f64>,
     last_sampled_at: Option<i64>,
+    last_persisted_metrics: ProcessMetrics,
+    last_persisted_metrics_at: Option<i64>,
 }
 
 #[derive(Default)]
@@ -178,6 +191,28 @@ struct SessionWorkspaceResult {
     workspace_path: PathBuf,
     branch_name: Option<String>,
     sandbox_state: Option<SandboxWorkspaceState>,
+}
+
+fn metrics_changed_significantly(previous: &ProcessMetrics, next: &ProcessMetrics) -> bool {
+    (previous.cpu_percent - next.cpu_percent).abs() >= METRIC_PERSIST_CPU_DELTA
+        || (previous.memory_mb - next.memory_mb).abs() >= METRIC_PERSIST_MEMORY_DELTA_MB
+        || previous.thread_count != next.thread_count
+        || previous.handle_count != next.handle_count
+        || previous.process_count != next.process_count
+}
+
+fn should_persist_metrics(
+    previous: &ProcessMetrics,
+    next: &ProcessMetrics,
+    last_persisted_at: Option<i64>,
+    sampled_at: i64,
+) -> bool {
+    if last_persisted_at.is_none() {
+        return true;
+    }
+
+    metrics_changed_significantly(previous, next)
+        || sampled_at - last_persisted_at.unwrap_or_default() >= METRIC_PERSIST_INTERVAL_MS
 }
 
 struct ApplySandboxOutcome {

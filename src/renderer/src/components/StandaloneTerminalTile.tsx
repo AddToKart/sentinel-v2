@@ -35,7 +35,10 @@ export function StandaloneTerminalTile({
   const writeFrameRef = useRef<number | null>(null)
   const writeInFlightRef = useRef(false)
   const isDisposedRef = useRef(false)
+  const rebuildTimerRef = useRef<number | null>(null)
+  const lastRebuildAtRef = useRef(0)
   const [isMaximized, setIsMaximized] = useState(false)
+  const [terminalEpoch, setTerminalEpoch] = useState(0)
 
   // Process write queue — batch all pending chunks into a single write to avoid
   // per-chunk callback recursion, which can fire after disposal and crash xterm.
@@ -104,10 +107,28 @@ export function StandaloneTerminalTile({
     }, 0)
   }
 
+  const requestTerminalRebuild = (delay = 180) => {
+    if (isDisposedRef.current) return
+
+    const now = Date.now()
+    if (now - lastRebuildAtRef.current < 1500) return
+
+    if (rebuildTimerRef.current !== null) {
+      window.clearTimeout(rebuildTimerRef.current)
+    }
+
+    rebuildTimerRef.current = window.setTimeout(() => {
+      rebuildTimerRef.current = null
+      lastRebuildAtRef.current = Date.now()
+      setTerminalEpoch((value) => value + 1)
+    }, delay)
+  }
+
   // Handle resize
   useEffect(() => {
     fitTerminal()
     focusTerminal()
+    requestTerminalRebuild(220)
   }, [fitNonce])
 
   // Initialize terminal
@@ -166,6 +187,10 @@ export function StandaloneTerminalTile({
         cancelAnimationFrame(writeFrameRef.current)
         writeFrameRef.current = null
       }
+      if (rebuildTimerRef.current !== null) {
+        window.clearTimeout(rebuildTimerRef.current)
+        rebuildTimerRef.current = null
+      }
 
       // Drain the write queue and reset in-flight flag before dispose
       writeQueueRef.current = []
@@ -191,7 +216,7 @@ export function StandaloneTerminalTile({
         // Ignore errors during disposal
       }
     }
-  }, [tab.id])
+  }, [tab.id, terminalEpoch])
 
   const handleWheel = (event: React.WheelEvent) => {
     if (isDisposedRef.current) return

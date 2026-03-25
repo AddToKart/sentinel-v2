@@ -206,12 +206,21 @@ impl SentinelManager {
             );
             diffs_by_id.insert(
                 session_id.clone(),
-                session_diff_snapshot_from_rows(
-                    &session_id,
-                    &workspace_id,
-                    file_change_rows,
-                    summary.created_at,
-                ),
+                if summary.cleanup_state == CleanupState::Removed {
+                    SessionDiffUpdate {
+                        session_id: session_id.clone(),
+                        workspace_id: workspace_id.clone(),
+                        modified_paths: Vec::new(),
+                        updated_at: summary.created_at,
+                    }
+                } else {
+                    session_diff_snapshot_from_rows(
+                        &session_id,
+                        &workspace_id,
+                        file_change_rows,
+                        summary.created_at,
+                    )
+                },
             );
             sessions_by_id.insert(session_id, summary);
         }
@@ -220,6 +229,9 @@ impl SentinelManager {
         let mut tab_metrics_by_id = HashMap::<String, TabMetricsUpdate>::new();
         for row in tab_rows {
             let summary = tab_summary_from_row(row);
+            if matches!(summary.status, TabStatus::Closed | TabStatus::Error) {
+                continue;
+            }
             let tab_id = summary.id.clone();
             let workspace_id = summary.workspace_id.clone();
             let pid = summary.pid;
@@ -268,6 +280,13 @@ impl SentinelManager {
             )
             .map_err(|error| format!("Failed to load IDE terminal state: {error}"))?
             .map(ide_state_from_row)
+            .and_then(|state| {
+                if matches!(state.status, IdeStatus::Ready | IdeStatus::Starting | IdeStatus::Closing) {
+                    Some(state)
+                } else {
+                    None
+                }
+            })
         } else {
             None
         };

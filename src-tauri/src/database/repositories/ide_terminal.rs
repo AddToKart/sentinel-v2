@@ -56,28 +56,31 @@ impl IdeTerminalRepository {
         pool: &SqlitePool,
         workspace_id: &str,
     ) -> Result<Option<IdeTerminalRow>, sqlx::Error> {
-        let row =
-            sqlx::query_as::<_, IdeTerminalRow>("SELECT * FROM ide_terminal WHERE workspace_id = ?1")
-                .bind(workspace_id)
-                .fetch_optional(pool)
-                .await?;
+        let row = sqlx::query_as::<_, IdeTerminalRow>(
+            "SELECT * FROM ide_terminal WHERE workspace_id = ?1",
+        )
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await?;
         Ok(row)
     }
 
-    pub async fn mark_stale_as_error(
+    pub async fn mark_stale_as_closed(
         pool: &SqlitePool,
-        error_message: &str,
+        close_message: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE ide_terminal
             SET
-                status = 'error',
+                status = 'closed',
+                process_id = NULL,
+                exit_code = NULL,
                 error_message = COALESCE(error_message, ?1)
             WHERE status NOT IN ('idle', 'closed', 'error')
             "#,
         )
-        .bind(error_message)
+        .bind(close_message)
         .execute(pool)
         .await?;
         Ok(())

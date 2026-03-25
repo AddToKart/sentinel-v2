@@ -4,16 +4,30 @@ import { GitBranch, PanelLeft, Plus, TerminalSquare } from 'lucide-react'
 import type { ProjectState, WorkspaceContext } from '@shared/types'
 
 import { WorkspaceSwitcher } from '../../components/WorkspaceSwitcher'
+import { WorkspaceNotifications } from './WorkspaceNotifications'
+import type { WorkspaceNotification } from '../hooks/useWorkspaceNotifications'
 import type { WorkspaceAction } from '../support'
 
 interface AppHeaderProps {
   activeWorkspaceId: string | null
+  bellRinging: boolean
   globalMode: 'ide' | 'multiplex'
   hasProject: boolean
+  notifications: WorkspaceNotification[]
+  previewNotification: WorkspaceNotification | null
   project: ProjectState
+  runningSessionCountsByWorkspace: Record<string, number>
+  sessionCountsByWorkspace: Record<string, number>
+  tabCountsByWorkspace: Record<string, number>
+  unreadNotificationCountsByWorkspace: Record<string, number>
+  unreadNotificationCount: number
   workspaces: WorkspaceContext[]
+  onClearNotifications: () => void
+  onClearPreviewNotification: () => void
   onCreateSession: () => void
   onCreateStandaloneTerminal: () => void
+  onDismissNotification: (notificationId: string) => void
+  onMarkAllNotificationsRead: () => void
   onOpenProject: () => void
   onSwitchWorkspace: (workspaceId: string) => void
   onToggleSidebar: () => void
@@ -22,12 +36,24 @@ interface AppHeaderProps {
 
 export function AppHeader({
   activeWorkspaceId,
+  bellRinging,
   globalMode,
   hasProject,
+  notifications,
+  previewNotification,
   project,
+  runningSessionCountsByWorkspace,
+  sessionCountsByWorkspace,
+  tabCountsByWorkspace,
+  unreadNotificationCountsByWorkspace,
+  unreadNotificationCount,
   workspaces,
+  onClearNotifications,
+  onClearPreviewNotification,
   onCreateSession,
   onCreateStandaloneTerminal,
+  onDismissNotification,
+  onMarkAllNotificationsRead,
   onOpenProject,
   onSwitchWorkspace,
   onToggleSidebar,
@@ -62,6 +88,10 @@ export function AppHeader({
             onCreateWorkspace={onOpenProject}
             onSwitchWorkspace={onSwitchWorkspace}
             onWorkspaceAction={onWorkspaceAction}
+            runningSessionCounts={runningSessionCountsByWorkspace}
+            sessionCounts={sessionCountsByWorkspace}
+            tabCounts={tabCountsByWorkspace}
+            unreadNotificationCounts={unreadNotificationCountsByWorkspace}
             workspaces={workspaces}
           />
         </div>
@@ -106,7 +136,21 @@ export function AppHeader({
         )}
       </div>
 
-      <div className="ml-auto w-[140px] shrink-0" />
+      <div
+        className="ml-auto flex shrink-0 items-center gap-2"
+        style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+      >
+        <WorkspaceNotifications
+          bellRinging={bellRinging}
+          notifications={notifications}
+          onClearNotifications={onClearNotifications}
+          onClearPreviewNotification={onClearPreviewNotification}
+          onDismissNotification={onDismissNotification}
+          onMarkAllRead={onMarkAllNotificationsRead}
+          previewNotification={previewNotification}
+          unreadCount={unreadNotificationCount}
+        />
+      </div>
     </header>
   )
 }

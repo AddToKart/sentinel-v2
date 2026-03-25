@@ -10,11 +10,14 @@ interface MultiplexWorkspaceViewProps {
   hasProject: boolean
   histories: Record<string, SessionCommandEntry[]>
   maximizedSessionId: string | null
+  onDeleteSession: (sessionId: string) => Promise<void>
   sessionDiffs: Record<string, string[]>
   sessions: SessionSummary[]
   windowsBuildNumber?: number
   onCloseSession: (sessionId: string) => Promise<void>
   onOpenProject: () => void
+  onPauseSession: (sessionId: string) => Promise<void>
+  onResumeSession: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
 }
 
@@ -23,11 +26,14 @@ export function MultiplexWorkspaceView({
   hasProject,
   histories,
   maximizedSessionId,
+  onDeleteSession,
   sessionDiffs,
   sessions,
   windowsBuildNumber,
   onCloseSession,
   onOpenProject,
+  onPauseSession,
+  onResumeSession,
   onToggleMaximize
 }: MultiplexWorkspaceViewProps): JSX.Element {
   if (!hasProject) {
@@ -65,7 +71,10 @@ export function MultiplexWorkspaceView({
         fitNonce={fitNonce}
         histories={histories}
         maximizedSessionId={maximizedSessionId}
+        onDelete={onDeleteSession}
         onClose={onCloseSession}
+        onPause={onPauseSession}
+        onResume={onResumeSession}
         onToggleMaximize={onToggleMaximize}
         sessionDiffs={sessionDiffs}
         sessions={sessions}

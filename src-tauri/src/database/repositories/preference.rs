@@ -12,16 +12,24 @@ impl PreferenceRepository {
         is_sensitive: bool,
         updated_at: i64,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"
-            DELETE FROM preferences
+            UPDATE preferences
+            SET value = ?3, is_sensitive = ?4, updated_at = ?5
             WHERE workspace_id IS NULL AND category = ?1 AND key = ?2
             "#,
         )
         .bind(category)
         .bind(key)
+        .bind(value)
+        .bind(is_sensitive as i64)
+        .bind(updated_at)
         .execute(pool)
         .await?;
+
+        if result.rows_affected() != 0 {
+            return Ok(());
+        }
 
         sqlx::query(
             r#"

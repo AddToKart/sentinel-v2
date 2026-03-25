@@ -57,7 +57,7 @@ impl SentinelManager {
         exit_code: Option<i32>,
         forced_error: Option<String>,
     ) {
-        let cleanup_input = {
+        let (cleanup_input, pause_requested) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.sessions.get_mut(&session_id) else {
                 return;
@@ -65,55 +65,88 @@ impl SentinelManager {
             if record.finalized {
                 return;
             }
+
             record.finalized = true;
+            let pause_requested =
+                record.close_requested && record.shutdown_mode == SessionShutdownMode::Pause;
             record.tracked_process_ids.clear();
-            record.summary.exit_code = exit_code;
+            record.summary.pid = None;
             record.summary.metrics = ProcessMetrics::default();
-            record.modified_paths.clear();
-            let closed_cleanly = exit_code.unwrap_or(0) == 0;
-            record.summary.status = if record.close_requested || closed_cleanly {
-                SessionStatus::Closed
-            } else {
-                SessionStatus::Error
-            };
-            record.summary.error = forced_error.clone().or_else(|| {
-                if !record.close_requested && !closed_cleanly {
-                    Some(format!(
-                        "PowerShell exited unexpectedly with code {}.",
-                        exit_code.unwrap_or_default()
-                    ))
-                } else {
-                    None
+            record.last_cpu_total_seconds = None;
+            record.last_sampled_at = None;
+            record.last_persisted_metrics = ProcessMetrics::default();
+            record.last_persisted_metrics_at = None;
+
+            if pause_requested {
+                record.summary.exit_code = None;
+                record.summary.status = SessionStatus::Paused;
+                if record.summary.cleanup_state == CleanupState::Active {
+                    record.summary.cleanup_state = CleanupState::Preserved;
                 }
-            });
-            (
-                record.summary.project_root.clone(),
-                record.summary.workspace_path.clone(),
-                record.summary.workspace_strategy,
-                record.summary.branch_name.clone(),
-            )
+                if forced_error.is_some() {
+                    record.summary.error = forced_error.clone();
+                }
+                (None, true)
+            } else {
+                record.summary.exit_code = exit_code;
+                let closed_cleanly = exit_code.unwrap_or(0) == 0;
+                record.summary.status = if record.close_requested || closed_cleanly {
+                    SessionStatus::Closed
+                } else {
+                    SessionStatus::Error
+                };
+                record.summary.error = forced_error.clone().or_else(|| {
+                    if !record.close_requested && !closed_cleanly {
+                        Some(format!(
+                            "PowerShell exited unexpectedly with code {}.",
+                            exit_code.unwrap_or_default()
+                        ))
+                    } else {
+                        None
+                    }
+                });
+                (
+                    Some((
+                        record.summary.project_root.clone(),
+                        record.summary.workspace_path.clone(),
+                        record.summary.workspace_strategy,
+                        record.summary.branch_name.clone(),
+                    )),
+                    false,
+                )
+            }
         };
 
-        let cleanup_result = cleanup_session_workspace(
-            &app,
-            Path::new(&cleanup_input.0),
-            Path::new(&cleanup_input.1),
-            cleanup_input.2,
-            cleanup_input.3.as_deref(),
-        );
+        let cleanup_result = cleanup_input.map(|input| {
+            cleanup_session_workspace(
+                &app,
+                Path::new(&input.0),
+                Path::new(&input.1),
+                input.2,
+                input.3.as_deref(),
+            )
+        });
 
         let final_summary = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let mut final_summary = None;
             if let Some(record) = inner.sessions.get_mut(&session_id) {
                 match cleanup_result {
-                    Ok(cleanup_state) => {
+                    Some(Ok(cleanup_state)) => {
                         record.summary.cleanup_state = cleanup_state;
+                        if cleanup_state == CleanupState::Removed {
+                            record.modified_paths.clear();
+                        }
                     }
-                    Err(error) => {
+                    Some(Err(error)) => {
                         record.summary.cleanup_state = CleanupState::Failed;
                         if record.summary.error.is_none() {
                             record.summary.error = Some(error);
+                        }
+                    }
+                    None => {
+                        if pause_requested && record.summary.cleanup_state == CleanupState::Active {
+                            record.summary.cleanup_state = CleanupState::Preserved;
                         }
                     }
                 }
@@ -243,7 +276,7 @@ impl SentinelManager {
                     .and_then(|pid| snapshot_map.get(&pid).cloned())
             };
 
-            let summary = {
+            let (summary, should_persist_metrics_now) = {
                 let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(record) = inner.sessions.get_mut(session_id) {
                     if let Some(snapshot) = maybe_snapshot {
@@ -285,17 +318,31 @@ impl SentinelManager {
                         record.summary.metrics = ProcessMetrics::default();
                         record.tracked_process_ids.clear();
                     }
-                    Some(record.summary.clone())
+                    let should_persist_metrics_now = should_persist_metrics(
+                        &record.last_persisted_metrics,
+                        &record.summary.metrics,
+                        record.last_persisted_metrics_at,
+                        sampled_at,
+                    );
+                    if should_persist_metrics_now {
+                        record.last_persisted_metrics = record.summary.metrics.clone();
+                        record.last_persisted_metrics_at = Some(sampled_at);
+                    }
+                    (Some(record.summary.clone()), should_persist_metrics_now)
                 } else {
-                    None
+                    (None, false)
                 }
             };
-            if let Some(summary) = summary.as_ref() {
-                if let Err(error) = self.persist_session_metrics(app, summary, sampled_at) {
-                    log_persistence_error("persist session metrics", &error);
+            if should_persist_metrics_now {
+                if let Some(summary) = summary.as_ref() {
+                    if let Err(error) = self.persist_session_metrics(app, summary, sampled_at) {
+                        log_persistence_error("persist session metrics", &error);
+                    }
                 }
             }
-            self.emit_session_metrics(app, session_id);
+            if summary.is_some() {
+                self.emit_session_metrics(app, session_id);
+            }
         }
 
         let session_updates = {
@@ -491,6 +538,7 @@ impl SentinelManager {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let entry = ActivityLogEntry {
                 id: format!("{}-{}", create_timestamp(), create_token()),
+                workspace_id: inner.active_workspace_id.clone(),
                 timestamp: now_millis(),
                 scope: scope.to_string(),
                 status: status.to_string(),

@@ -57,6 +57,8 @@ impl SentinelManager {
             tracked_process_ids: Vec::new(),
             last_cpu_total_seconds: None,
             last_sampled_at: None,
+            last_persisted_metrics: summary.metrics.clone(),
+            last_persisted_metrics_at: Some(summary.created_at),
         };
 
         let workspace = {
@@ -535,7 +537,7 @@ impl SentinelManager {
             process_count: snapshot.process_count,
         };
 
-        let summary = {
+        let (summary, should_persist_metrics_now) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.tabs.get_mut(tab_id) else {
                 return;
@@ -545,12 +547,24 @@ impl SentinelManager {
             record.tracked_process_ids = snapshot.process_ids.clone();
             record.last_cpu_total_seconds = Some(snapshot.cpu_total_seconds);
             record.last_sampled_at = Some(now);
-            Some(record.summary.clone())
+            let should_persist_metrics_now = should_persist_metrics(
+                &record.last_persisted_metrics,
+                &record.summary.metrics,
+                record.last_persisted_metrics_at,
+                now,
+            );
+            if should_persist_metrics_now {
+                record.last_persisted_metrics = record.summary.metrics.clone();
+                record.last_persisted_metrics_at = Some(now);
+            }
+            (Some(record.summary.clone()), should_persist_metrics_now)
         };
 
-        if let Some(summary) = summary.as_ref() {
-            if let Err(error) = self.persist_tab_metrics(app, summary, now) {
-                log_persistence_error("persist tab metrics", &error);
+        if should_persist_metrics_now {
+            if let Some(summary) = summary.as_ref() {
+                if let Err(error) = self.persist_tab_metrics(app, summary, now) {
+                    log_persistence_error("persist tab metrics", &error);
+                }
             }
         }
 

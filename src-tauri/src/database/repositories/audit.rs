@@ -20,7 +20,16 @@ impl AuditRepository {
             INSERT INTO audit_log
                 (workspace_id, session_id, tab_id, timestamp, action_type,
                  resource_type, resource_id, details)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            VALUES (
+                (SELECT id FROM workspaces WHERE id = ?1),
+                (SELECT id FROM sessions WHERE id = ?2),
+                (SELECT id FROM tabs WHERE id = ?3),
+                ?4,
+                ?5,
+                ?6,
+                ?7,
+                ?8
+            )
             "#,
         )
         .bind(workspace_id)
@@ -85,19 +94,25 @@ impl AuditRepository {
         end: i64,
     ) -> Result<String, sqlx::Error> {
         let rows = Self::find_by_date_range(pool, workspace_id, start, end).await?;
-        let json = serde_json::to_string(&rows.iter().map(|r| {
-            serde_json::json!({
-                "id": r.id,
-                "workspace_id": r.workspace_id,
-                "session_id": r.session_id,
-                "tab_id": r.tab_id,
-                "timestamp": r.timestamp,
-                "action_type": r.action_type,
-                "resource_type": r.resource_type,
-                "resource_id": r.resource_id,
-                "details": r.details,
-            })
-        }).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string());
+        let json = serde_json::to_string(
+            &rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "workspace_id": r.workspace_id,
+                        "session_id": r.session_id,
+                        "tab_id": r.tab_id,
+                        "timestamp": r.timestamp,
+                        "action_type": r.action_type,
+                        "resource_type": r.resource_type,
+                        "resource_id": r.resource_id,
+                        "details": r.details,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string());
         Ok(json)
     }
 }

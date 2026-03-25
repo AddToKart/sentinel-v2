@@ -1,4 +1,5 @@
 use sqlx::{
+    migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     SqlitePool,
 };
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 pub mod db_models;
 pub mod repositories;
+
+static MIGRATOR: Migrator = sqlx::migrate!("./src/database/migrations");
 
 pub struct Database {
     pool: SqlitePool,
@@ -22,14 +25,19 @@ fn now_unix_seconds() -> u64 {
 }
 
 fn backup_query_for(path: &Path) -> String {
-    let escaped = path.to_string_lossy().replace('\\', "/").replace('\'', "''");
+    let escaped = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace('\'', "''");
     format!("VACUUM INTO '{}'", escaped)
 }
 
 async fn create_backup(pool: &SqlitePool, backup_path: &Path) -> Result<(), sqlx::Error> {
     if let Some(parent) = backup_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            sqlx::Error::Configuration(format!("Failed to create backup directory: {}", error).into())
+            sqlx::Error::Configuration(
+                format!("Failed to create backup directory: {}", error).into(),
+            )
         })?;
     }
 
@@ -60,11 +68,7 @@ fn prune_backups_by_prefix(
         })?
         .filter_map(Result::ok)
         .filter(|entry| {
-            entry.path().is_file()
-                && entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(prefix)
+            entry.path().is_file() && entry.file_name().to_string_lossy().starts_with(prefix)
         })
         .collect::<Vec<_>>();
 
@@ -93,6 +97,29 @@ async fn ensure_periodic_backup(
     Ok(())
 }
 
+async fn has_pending_migrations(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    if MIGRATOR.migrations.is_empty() {
+        return Ok(false);
+    }
+
+    let migrations_table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    .is_some();
+
+    if !migrations_table_exists {
+        return Ok(true);
+    }
+
+    let applied_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await?;
+
+    Ok((applied_count as usize) < MIGRATOR.migrations.len())
+}
+
 impl Database {
     /// Initialize the database: create directory, open/create the DB file,
     /// configure PRAGMA settings, and run all pending migrations.
@@ -116,7 +143,10 @@ impl Database {
             .busy_timeout(Duration::from_secs(30))
             .pragma("foreign_keys", "ON")
             .pragma("cache_size", "-65536") // 64 MB page cache
-            .pragma("temp_store", "MEMORY");
+            .pragma("temp_store", "MEMORY")
+            .pragma("mmap_size", "268435456")
+            .pragma("wal_autocheckpoint", "1000")
+            .pragma("journal_size_limit", "67108864");
 
         let pool = SqlitePoolOptions::new()
             .max_connections(10)
@@ -126,7 +156,13 @@ impl Database {
             .connect_with(connect_options)
             .await?;
 
-        if database_previously_existed {
+        let pending_migrations = if database_previously_existed {
+            has_pending_migrations(&pool).await?
+        } else {
+            !MIGRATOR.migrations.is_empty()
+        };
+
+        if database_previously_existed && pending_migrations {
             let timestamp = now_unix_seconds();
             create_backup(
                 &pool,
@@ -136,9 +172,8 @@ impl Database {
         }
 
         // Run migrations embedded from the migrations directory
-        sqlx::migrate!("./src/database/migrations")
-            .run(&pool)
-            .await?;
+        MIGRATOR.run(&pool).await?;
+        sqlx::query("PRAGMA optimize").execute(&pool).await?;
 
         if database_previously_existed {
             let timestamp = now_unix_seconds();
@@ -160,6 +195,7 @@ impl Database {
     }
 
     /// Runs VACUUM and ANALYZE for database maintenance.
+    #[allow(dead_code)]
     pub async fn vacuum(&self) -> Result<(), sqlx::Error> {
         sqlx::query("VACUUM").execute(&self.pool).await?;
         sqlx::query("ANALYZE").execute(&self.pool).await?;
@@ -167,6 +203,7 @@ impl Database {
     }
 
     /// Runs a quick integrity check.
+    #[allow(dead_code)]
     pub async fn integrity_check(&self) -> Result<bool, sqlx::Error> {
         let result: (String,) = sqlx::query_as("PRAGMA integrity_check")
             .fetch_one(&self.pool)

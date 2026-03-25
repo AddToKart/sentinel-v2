@@ -169,6 +169,15 @@ const api: SentinelApi = {
   closeSession(sessionId: string) {
     return invokeCommand<void>('close_session', { sessionId })
   },
+  pauseSession(sessionId: string) {
+    return invokeCommand<void>('pause_session', { sessionId })
+  },
+  resumeSession(sessionId: string) {
+    return invokeCommand<SessionSummary>('resume_session', { sessionId })
+  },
+  deleteSession(sessionId: string) {
+    return invokeCommand<void>('delete_session', { sessionId })
+  },
   resizeSession(sessionId: string, cols: number, rows: number) {
     return invokeCommand<void>('resize_session', { sessionId, cols, rows })
   },

@@ -1,4 +1,4 @@
-use crate::database::db_models::TabRow;
+use crate::database::db_models::{TabRow, WorkspaceMemberRow};
 use crate::models::{TabStatus, TabSummary};
 use sqlx::SqlitePool;
 
@@ -53,7 +53,17 @@ impl TabRepository {
         let status_str = tab_status_to_str(status);
         sqlx::query(
             r#"
-            UPDATE tabs SET status = ?2, exit_code = ?3, error_message = ?4
+            UPDATE tabs SET
+                status = ?2,
+                exit_code = ?3,
+                error_message = ?4,
+                process_id = CASE WHEN ?2 IN ('closed', 'error') THEN NULL ELSE process_id END,
+                cpu_percent = CASE WHEN ?2 IN ('closed', 'error') THEN 0.0 ELSE cpu_percent END,
+                memory_mb = CASE WHEN ?2 IN ('closed', 'error') THEN 0.0 ELSE memory_mb END,
+                thread_count = CASE WHEN ?2 IN ('closed', 'error') THEN 0 ELSE thread_count END,
+                handle_count = CASE WHEN ?2 IN ('closed', 'error') THEN 0 ELSE handle_count END,
+                process_count = CASE WHEN ?2 IN ('closed', 'error') THEN 0 ELSE process_count END,
+                last_metrics_update = CASE WHEN ?2 IN ('closed', 'error') THEN NULL ELSE last_metrics_update END
             WHERE id = ?1
             "#,
         )
@@ -133,20 +143,38 @@ impl TabRepository {
         Ok(rows)
     }
 
-    pub async fn mark_stale_as_error(
+    pub async fn find_workspace_memberships(
         pool: &SqlitePool,
-        error_message: &str,
+    ) -> Result<Vec<WorkspaceMemberRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, WorkspaceMemberRow>(
+            "SELECT id, workspace_id FROM tabs WHERE status NOT IN ('closed', 'error')",
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn mark_stale_as_closed(
+        pool: &SqlitePool,
+        close_message: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE tabs
             SET
-                status = 'error',
-                error_message = COALESCE(error_message, ?1)
+                status = 'closed',
+                error_message = COALESCE(error_message, ?1),
+                process_id = NULL,
+                cpu_percent = 0.0,
+                memory_mb = 0.0,
+                thread_count = 0,
+                handle_count = 0,
+                process_count = 0,
+                last_metrics_update = NULL
             WHERE status NOT IN ('closed', 'error')
             "#,
         )
-        .bind(error_message)
+        .bind(close_message)
         .execute(pool)
         .await?;
         Ok(())

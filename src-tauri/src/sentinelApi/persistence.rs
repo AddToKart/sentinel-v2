@@ -66,6 +66,7 @@ fn workspace_from_row(row: WorkspaceRow, refresh_tree: bool) -> WorkspaceContext
 fn activity_entry_from_row(row: ActivityLogRow) -> ActivityLogEntry {
     ActivityLogEntry {
         id: row.id,
+        workspace_id: Some(row.workspace_id),
         timestamp: row.timestamp,
         scope: row.scope,
         status: row.status,
@@ -79,6 +80,7 @@ fn session_status_from_db(value: &str) -> SessionStatus {
     match value {
         "ready" => SessionStatus::Ready,
         "closing" => SessionStatus::Closing,
+        "paused" => SessionStatus::Paused,
         "closed" => SessionStatus::Closed,
         "error" => SessionStatus::Error,
         _ => SessionStatus::Starting,
@@ -284,41 +286,33 @@ fn log_persistence_error(context: &str, error: &str) {
 impl SentinelManager {
     pub fn hydrate_from_database(&self, app: &AppHandle) -> Result<(), String> {
         let pool = database_pool(app);
-        tauri::async_runtime::block_on(async {
-            SessionRepository::mark_stale_as_error(
-                &pool,
-                "Sentinel restarted before this session completed cleanup.",
-            )
-            .await?;
-            TabRepository::mark_stale_as_error(
-                &pool,
-                "Sentinel restarted before this terminal closed cleanly.",
-            )
-            .await?;
-            IdeTerminalRepository::mark_stale_as_error(
-                &pool,
-                "Sentinel restarted before the IDE terminal closed cleanly.",
-            )
-            .await?;
-            Ok::<_, sqlx::Error>(())
-        })
-        .map_err(|error| format!("Failed to reconcile persisted runtime state: {error}"))?;
+        let (workspace_rows, session_rows, tab_rows, activity_rows, preference_rows) =
+            tauri::async_runtime::block_on(async {
+                SessionRepository::mark_stale_as_paused(
+                    &pool,
+                    "Session paused because Sentinel exited before this agent finished.",
+                )
+                .await?;
+                TabRepository::mark_stale_as_closed(
+                    &pool,
+                    "Terminal closed because Sentinel exited before it shut down cleanly.",
+                )
+                .await?;
+                IdeTerminalRepository::mark_stale_as_closed(
+                    &pool,
+                    "IDE terminal closed because Sentinel exited before it shut down cleanly.",
+                )
+                .await?;
 
-        let workspace_rows = tauri::async_runtime::block_on(WorkspaceRepository::find_all(&pool))
-            .map_err(|error| format!("Failed to load persisted workspaces: {error}"))?;
-        let session_rows = tauri::async_runtime::block_on(SessionRepository::find_all(&pool))
-            .map_err(|error| format!("Failed to load persisted sessions: {error}"))?;
-        let tab_rows = tauri::async_runtime::block_on(TabRepository::find_all(&pool))
-            .map_err(|error| format!("Failed to load persisted tabs: {error}"))?;
-        let activity_rows = tauri::async_runtime::block_on(ActivityRepository::find_recent(
-            &pool,
-            Some(120),
-        ))
-        .map_err(|error| format!("Failed to load persisted activity log: {error}"))?;
-        let preference_rows = tauri::async_runtime::block_on(
-            PreferenceRepository::find_global_by_category(&pool, "workspace"),
-        )
-        .map_err(|error| format!("Failed to load persisted preferences: {error}"))?;
+                tokio::try_join!(
+                    WorkspaceRepository::find_all(&pool),
+                    SessionRepository::find_workspace_memberships(&pool),
+                    TabRepository::find_workspace_memberships(&pool),
+                    ActivityRepository::find_recent(&pool, Some(120)),
+                    PreferenceRepository::find_global_by_category(&pool, "workspace"),
+                )
+            })
+            .map_err(|error| format!("Failed to hydrate persisted runtime state: {error}"))?;
 
         let database_active_workspace_id = workspace_rows
             .iter()
@@ -394,11 +388,7 @@ impl SentinelManager {
 
     fn persist_workspace(&self, app: &AppHandle, workspace: &WorkspaceContext) -> Result<(), String> {
         let pool = database_pool(app);
-        tauri::async_runtime::block_on(async {
-            WorkspaceRepository::create(&pool, workspace).await?;
-            WorkspaceRepository::update(&pool, workspace).await?;
-            Ok::<_, sqlx::Error>(())
-        })
+        tauri::async_runtime::block_on(WorkspaceRepository::upsert(&pool, workspace))
         .map_err(|error| format!("Failed to persist workspace {}: {error}", workspace.id))
     }
 

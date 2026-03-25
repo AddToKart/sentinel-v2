@@ -6,6 +6,7 @@ import { IdeWorkspaceView } from '../components/IdeWorkspaceView'
 import { MultiplexWorkspaceView } from '../components/MultiplexWorkspaceView'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useSentinelBootstrap } from './useSentinelBootstrap'
+import { useWorkspaceNotifications } from './useWorkspaceNotifications'
 import {
   defaultIdeTerminalState,
   defaultSummary,
@@ -64,11 +65,13 @@ export function useAppController() {
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
   const [statusBarCollapsed, setStatusBarCollapsed] = useState(false)
+  const [bootstrapComplete, setBootstrapComplete] = useState(false)
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
   const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
   const fitTimerRef = useRef<number | null>(null)
+  const fitFollowUpTimerRef = useRef<number | null>(null)
   const workspacesRef = useRef<WorkspaceContext[]>([])
 
   const bridgeAvailable = Boolean(getSentinelBridge())
@@ -80,16 +83,53 @@ export function useAppController() {
   const visibleTabs = activeWorkspaceId
     ? tabs.filter((tab) => tab.workspaceId === activeWorkspaceId)
     : []
+  const sessionCountsByWorkspace: Record<string, number> = {}
+  const tabCountsByWorkspace: Record<string, number> = {}
+
+  for (const session of sessions) {
+    sessionCountsByWorkspace[session.workspaceId] =
+      (sessionCountsByWorkspace[session.workspaceId] ?? 0) + 1
+  }
+  for (const tab of tabs) {
+    tabCountsByWorkspace[tab.workspaceId] =
+      (tabCountsByWorkspace[tab.workspaceId] ?? 0) + 1
+  }
+
+  const {
+    bellRinging,
+    clearNotifications,
+    clearPreviewNotification,
+    dismissNotification,
+    markAllRead,
+    notifications,
+    previewNotification,
+    runningSessionCountsByWorkspace,
+    unreadCount,
+    unreadCountsByWorkspace
+  } = useWorkspaceNotifications({
+    activeWorkspaceId,
+    activityLog,
+    bootstrapped: bootstrapComplete,
+    sessions,
+    workspaces
+  })
 
   function requestTerminalFit(delay = 140): void {
     if (fitTimerRef.current) {
       window.clearTimeout(fitTimerRef.current)
+    }
+    if (fitFollowUpTimerRef.current) {
+      window.clearTimeout(fitFollowUpTimerRef.current)
     }
 
     fitTimerRef.current = window.setTimeout(() => {
       fitTimerRef.current = null
       setFitNonce((value) => value + 1)
     }, delay)
+    fitFollowUpTimerRef.current = window.setTimeout(() => {
+      fitFollowUpTimerRef.current = null
+      setFitNonce((value) => value + 1)
+    }, delay + 240)
   }
 
   function requireSentinelBridge(): SentinelApi | null {
@@ -108,6 +148,7 @@ export function useAppController() {
 
   useSentinelBootstrap({
     workspacesRef,
+    setBootstrapComplete,
     setActivityLog,
     setActiveWorkspaceId,
     setDefaultSessionStrategy,
@@ -140,12 +181,27 @@ export function useAppController() {
         window.clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
       }
+      if (fitFollowUpTimerRef.current) {
+        window.clearTimeout(fitFollowUpTimerRef.current)
+        fitFollowUpTimerRef.current = null
+      }
     }
   }, [])
 
   useEffect(() => {
     requestTerminalFit(120)
-  }, [sidebarCollapsed, consoleOpen, visibleSessions.length, maximizedSessionId, activeTabId])
+  }, [
+    activeIdeTerminalId,
+    activeTabId,
+    activeWorkspaceId,
+    consoleOpen,
+    globalMode,
+    ideTerminalCollapsed,
+    maximizedSessionId,
+    sidebarCollapsed,
+    visibleSessions.length,
+    visibleTabs.length
+  ])
 
   useEffect(() => {
     if (globalMode === 'ide') {
@@ -359,7 +415,60 @@ export function useAppController() {
     try {
       await sentinel.closeSession(sessionId)
     } catch (error) {
-      setErrorMessage(`Failed to close session: ${getErrorMessage(error)}`)
+      setErrorMessage(`Failed to stop session: ${getErrorMessage(error)}`)
+    }
+  }
+
+  async function handlePauseSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.pauseSession(sessionId)
+    } catch (error) {
+      setErrorMessage(`Failed to pause session: ${getErrorMessage(error)}`)
+    }
+  }
+
+  async function handleResumeSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.resumeSession(sessionId)
+    } catch (error) {
+      setErrorMessage(`Failed to resume session: ${getErrorMessage(error)}`)
+    }
+  }
+
+  async function handleDeleteSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.deleteSession(sessionId)
+      setSessions((current) => current.filter((session) => session.id !== sessionId))
+      setSessionHistories((current) => {
+        const next = { ...current }
+        delete next[sessionId]
+        return next
+      })
+      setSessionDiffs((current) => {
+        const next = { ...current }
+        delete next[sessionId]
+        return next
+      })
+      if (maximizedSessionId === sessionId) {
+        setMaximizedSessionId(null)
+      }
+    } catch (error) {
+      setErrorMessage(`Failed to delete session: ${getErrorMessage(error)}`)
     }
   }
 
@@ -479,8 +588,11 @@ export function useAppController() {
       hasProject={hasProject}
       histories={sessionHistories}
       maximizedSessionId={maximizedSessionId}
+      onDeleteSession={handleDeleteSession}
       onCloseSession={handleCloseSession}
       onOpenProject={() => { void handleOpenProject() }}
+      onPauseSession={handlePauseSession}
+      onResumeSession={handleResumeSession}
       onToggleMaximize={(id) => setMaximizedSessionId((current) => current === id ? null : id)}
       sessionDiffs={sessionDiffs}
       sessions={visibleSessions}
@@ -533,15 +645,27 @@ export function useAppController() {
     globalActions,
     headerProps: {
       activeWorkspaceId,
+      bellRinging,
       globalMode,
       hasProject,
+      notifications,
+      onClearNotifications: clearNotifications,
+      onClearPreviewNotification: clearPreviewNotification,
       onCreateSession: () => { void handleCreateSession() },
       onCreateStandaloneTerminal: () => { void handleCreateStandaloneTerminal() },
+      onDismissNotification: dismissNotification,
+      onMarkAllNotificationsRead: markAllRead,
       onOpenProject: () => { void handleOpenProject() },
       onSwitchWorkspace: (workspaceId: string) => { void handleSwitchWorkspace(workspaceId) },
       onToggleSidebar: toggleSidebar,
       onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => { void handleWorkspaceAction(workspaceId, action) },
+      previewNotification,
       project,
+      runningSessionCountsByWorkspace,
+      sessionCountsByWorkspace,
+      tabCountsByWorkspace,
+      unreadNotificationCount: unreadCount,
+      unreadNotificationCountsByWorkspace: unreadCountsByWorkspace,
       workspaces
     },
     workspacePanelsProps: {

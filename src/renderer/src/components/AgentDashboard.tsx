@@ -11,6 +11,9 @@ interface AgentDashboardProps {
   histories: Record<string, SessionCommandEntry[]>
   sessionDiffs: Record<string, string[]>
   onClose: (sessionId: string) => Promise<void>
+  onPause: (sessionId: string) => Promise<void>
+  onResume: (sessionId: string) => Promise<void>
+  onDelete: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
   maximizedSessionId: string | null
   fitNonce: number
@@ -72,6 +75,9 @@ export function AgentDashboard({
   histories,
   sessionDiffs,
   onClose,
+  onPause,
+  onResume,
+  onDelete,
   onToggleMaximize,
   maximizedSessionId,
   fitNonce,
@@ -96,8 +102,11 @@ export function AgentDashboard({
             fitNonce={fitNonce}
             historyEntries={histories[session.id] ?? []}
             modifiedPaths={sessionDiffs[session.id] || []}
+            onDelete={onDelete}
             isMaximized
             onClose={onClose}
+            onPause={onPause}
+            onResume={onResume}
             onToggleMaximize={onToggleMaximize}
             session={session}
             applySession={() => window.sentinel.applySession(session.id)}
@@ -149,8 +158,11 @@ export function AgentDashboard({
                 fitNonce={fitNonce}
                 historyEntries={histories[masterSession.id] ?? []}
                 modifiedPaths={sessionDiffs[masterSession.id] || []}
+                onDelete={onDelete}
                 isMaximized={false}
                 onClose={onClose}
+                onPause={onPause}
+                onResume={onResume}
                 onToggleMaximize={onToggleMaximize}
                 session={masterSession}
                 applySession={() => window.sentinel.applySession(masterSession.id)}
@@ -172,8 +184,11 @@ export function AgentDashboard({
                         fitNonce={fitNonce}
                         historyEntries={histories[session.id] ?? []}
                         modifiedPaths={sessionDiffs[session.id] || []}
+                        onDelete={onDelete}
                         isMaximized={false}
                         onClose={onClose}
+                        onPause={onPause}
+                        onResume={onResume}
                         onToggleMaximize={onToggleMaximize}
                         session={session}
                         applySession={() => window.sentinel.applySession(session.id)}
@@ -222,8 +237,11 @@ export function AgentDashboard({
                             fitNonce={fitNonce}
                             historyEntries={histories[session.id] ?? []}
                             modifiedPaths={sessionDiffs[session.id] || []}
+                            onDelete={onDelete}
                             isMaximized={false}
                             onClose={onClose}
+                            onPause={onPause}
+                            onResume={onResume}
                             onToggleMaximize={onToggleMaximize}
                             session={session}
                             applySession={() => window.sentinel.applySession(session.id)}

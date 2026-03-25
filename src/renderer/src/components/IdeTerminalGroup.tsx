@@ -32,41 +32,39 @@ export function IdeTerminalGroup({
   // Ensure the active tab actually exists, otherwise fallback to ide-workspace
   const isValidTab = activeTerminalId === 'ide-workspace' || tabs.some(t => t.id === activeTerminalId)
   const displayId = isValidTab ? activeTerminalId : 'ide-workspace'
-  
+  const activeTab = displayId === 'ide-workspace'
+    ? null
+    : tabs.find((tab) => tab.id === displayId) ?? null
   const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="flex h-full w-full bg-[#0d1117] overflow-hidden">
       {/* Left: Active Terminal Content */}
       <div className="flex-1 min-w-0 h-full relative border-r border-white/10">
-        <div className={`absolute inset-0 transition-opacity duration-200 ${displayId === 'ide-workspace' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-          <IdeTerminalPanel
-            fitNonce={fitNonce}
-            projectPath={projectPath}
-            terminalState={ideTerminalState}
-            windowsBuildNumber={windowsBuildNumber}
-            onClose={onToggleCollapse}
-            actionsTarget={displayId === 'ide-workspace' ? actionsTarget : null}
-            isVisible={displayId === 'ide-workspace'}
-          />
-        </div>
-
-        {tabs.map(tab => (
-          <div
-            key={tab.id}
-            className={`absolute inset-0 transition-opacity duration-200 ${displayId === tab.id ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}
-          >
-            {/* We render the standalone terminal. If we wanted, we could also pass 
-                actionsTarget here, but StandaloneTerminalTile has its own header. */}
+        {displayId === 'ide-workspace' ? (
+          <div className="absolute inset-0 z-10">
+            <IdeTerminalPanel
+              fitNonce={fitNonce}
+              projectPath={projectPath}
+              terminalState={ideTerminalState}
+              windowsBuildNumber={windowsBuildNumber}
+              onClose={onToggleCollapse}
+              actionsTarget={actionsTarget}
+              isVisible
+            />
+          </div>
+        ) : activeTab ? (
+          <div className="absolute inset-0 z-10">
             <StandaloneTerminalTile
-              tab={tab}
+              key={activeTab.id}
+              tab={activeTab}
               fitNonce={fitNonce}
               windowsBuildNumber={windowsBuildNumber}
-              onClose={() => onCloseTerminal(tab.id, {} as any)}
+              onClose={() => onCloseTerminal(activeTab.id, {} as any)}
               hideMaximize={true}
             />
           </div>
-        ))}
+        ) : null}
       </div>
 
       {/* Right: Vertical Tab Sidebar (VS Code style) */}

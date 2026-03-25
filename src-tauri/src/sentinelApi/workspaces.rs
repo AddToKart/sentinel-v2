@@ -234,24 +234,14 @@ impl SentinelManager {
         workspace_id: &str,
         close_sessions: bool,
     ) -> Result<(), String> {
-        let (session_ids, tab_ids, is_active, next_active_project_path) = {
+        let (session_ids, tab_ids, is_active, next_active_project_path, should_close_ide) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if !inner.workspaces.contains_key(workspace_id) {
+            let Some(workspace) = inner.workspaces.get(workspace_id) else {
                 return Err("Workspace not found.".to_string());
-            }
+            };
 
-            let session_ids = inner
-                .sessions
-                .values()
-                .filter(|record| record.summary.workspace_id == workspace_id)
-                .map(|record| record.summary.id.clone())
-                .collect::<Vec<_>>();
-            let tab_ids = inner
-                .tabs
-                .values()
-                .filter(|record| record.summary.workspace_id == workspace_id)
-                .map(|record| record.summary.id.clone())
-                .collect::<Vec<_>>();
+            let session_ids = workspace.session_ids.clone();
+            let tab_ids = workspace.tab_ids.clone();
 
             if !close_sessions && (!session_ids.is_empty() || !tab_ids.is_empty()) {
                 return Err(
@@ -272,8 +262,10 @@ impl SentinelManager {
             } else {
                 None
             };
+            let should_close_ide =
+                is_active && inner.ide.record.is_some() && inner.active_workspace_id.as_deref() == Some(workspace_id);
 
-            (session_ids, tab_ids, is_active, next_active_project_path)
+            (session_ids, tab_ids, is_active, next_active_project_path, should_close_ide)
         };
 
         if is_active {
@@ -281,6 +273,9 @@ impl SentinelManager {
         }
 
         if close_sessions {
+            if should_close_ide {
+                let _ = self.close_ide_terminal(app);
+            }
             for tab_id in &tab_ids {
                 let _ = self.close_tab(app, tab_id);
             }
@@ -380,27 +375,20 @@ impl SentinelManager {
     ) -> Result<(), String> {
         let active_items = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if !inner.workspaces.contains_key(workspace_id) {
+            let Some(workspace) = inner.workspaces.get(workspace_id) else {
                 return Err("Workspace not found.".to_string());
-            }
+            };
 
-            let session_ids = inner
-                .sessions
-                .values()
-                .filter(|record| record.summary.workspace_id == workspace_id)
-                .map(|record| record.summary.id.clone())
-                .collect::<Vec<_>>();
-            let tab_ids = inner
-                .tabs
-                .values()
-                .filter(|record| record.summary.workspace_id == workspace_id)
-                .map(|record| record.summary.id.clone())
-                .collect::<Vec<_>>();
+            let should_close_ide =
+                inner.active_workspace_id.as_deref() == Some(workspace_id) && inner.ide.record.is_some();
 
-            (session_ids, tab_ids)
+            (workspace.session_ids.clone(), workspace.tab_ids.clone(), should_close_ide)
         };
-        let (session_ids, tab_ids) = active_items;
+        let (session_ids, tab_ids, should_close_ide) = active_items;
 
+        if should_close_ide {
+            let _ = self.close_ide_terminal(app);
+        }
         for tab_id in &tab_ids {
             let _ = self.close_tab(app, tab_id);
         }
@@ -416,11 +404,34 @@ impl SentinelManager {
 
     pub fn pause_workspace(
         self: &Arc<Self>,
-        _app: &AppHandle,
-        _workspace_id: &str,
+        app: &AppHandle,
+        workspace_id: &str,
     ) -> Result<(), String> {
-        // Soft pause implementation will go here.
-        println!("Soft pause triggered for workspace: {}", _workspace_id);
+        let items = {
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(workspace) = inner.workspaces.get(workspace_id) else {
+                return Err("Workspace not found.".to_string());
+            };
+
+            let should_close_ide =
+                inner.active_workspace_id.as_deref() == Some(workspace_id) && inner.ide.record.is_some();
+
+            (workspace.session_ids.clone(), workspace.tab_ids.clone(), should_close_ide)
+        };
+        let (session_ids, tab_ids, should_close_ide) = items;
+
+        if should_close_ide {
+            let _ = self.close_ide_terminal(app);
+        }
+        for tab_id in &tab_ids {
+            let _ = self.close_tab(app, tab_id);
+        }
+        for session_id in &session_ids {
+            let _ = self.pause_session(app, session_id);
+        }
+
+        self.emit_workspace_updated(app, workspace_id);
+        self.emit_workspace_state(app);
         Ok(())
     }
 }

@@ -39,7 +39,9 @@ export function useIdeTerminalRuntime({
   const fitFrameRef = useRef<number | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const focusFrameRef = useRef<number | null>(null)
+  const rebuildTimerRef = useRef<number | null>(null)
   const recoveryTimerRef = useRef<number | null>(null)
+  const lastRebuildAtRef = useRef(0)
   const lastGeometryRef = useRef({ width: 0, height: 0, cols: 0, rows: 0 })
   const lastProjectPathRef = useRef<string | undefined>(projectPath)
   const hasWrittenExitRef = useRef(false)
@@ -48,6 +50,7 @@ export function useIdeTerminalRuntime({
   const [terminalState, setTerminalState] = useState<IdeTerminalState>(() => externalState)
   const [connecting, setConnecting] = useState(false)
   const [operationLoading, setOperationLoading] = useState<'apply' | 'discard' | null>(null)
+  const [terminalEpoch, setTerminalEpoch] = useState(0)
 
   function scheduleWriteFlush(): void {
     if (writeFrameRef.current !== null) {
@@ -193,6 +196,27 @@ export function useIdeTerminalRuntime({
     })
   }
 
+  function requestTerminalRebuild(delay = 180): void {
+    if (!isVisible) {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastRebuildAtRef.current < 1500) {
+      return
+    }
+
+    if (rebuildTimerRef.current !== null) {
+      window.clearTimeout(rebuildTimerRef.current)
+    }
+
+    rebuildTimerRef.current = window.setTimeout(() => {
+      rebuildTimerRef.current = null
+      lastRebuildAtRef.current = Date.now()
+      setTerminalEpoch((value) => value + 1)
+    }, delay)
+  }
+
   async function ensureTerminal(resetOutput = false): Promise<void> {
     if (!projectPath) {
       setTerminalState(createIdleState())
@@ -269,6 +293,10 @@ export function useIdeTerminalRuntime({
         cancelAnimationFrame(focusFrameRef.current)
         focusFrameRef.current = null
       }
+      if (rebuildTimerRef.current !== null) {
+        window.clearTimeout(rebuildTimerRef.current)
+        rebuildTimerRef.current = null
+      }
       writeQueueRef.current = []
       writeInFlightRef.current = false
       lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
@@ -277,7 +305,7 @@ export function useIdeTerminalRuntime({
       fitAddonRef.current = null
       hasInitializedRef.current = false
     }
-  }, [windowsBuildNumber])
+  }, [terminalEpoch, windowsBuildNumber])
 
   useEffect(() => {
     if (!isVisible || hasInitializedRef.current) {
@@ -316,7 +344,8 @@ export function useIdeTerminalRuntime({
         refreshTerminalSurface(terminalRef.current)
       }
     })
-  }, [fitNonce])
+    requestTerminalRebuild(220)
+  }, [fitNonce, isVisible])
 
   useEffect(() => {
     if (recoveryTimerRef.current !== null) {
@@ -385,7 +414,7 @@ export function useIdeTerminalRuntime({
 
   async function recoverOrReconnect(): Promise<void> {
     if (terminalState.status === 'ready') {
-      healTerminalDisplay()
+      requestTerminalRebuild(0)
       return
     }
 

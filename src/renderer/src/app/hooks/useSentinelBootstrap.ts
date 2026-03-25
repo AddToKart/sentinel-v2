@@ -24,6 +24,7 @@ import {
 
 interface UseSentinelBootstrapOptions {
   workspacesRef: MutableRefObject<WorkspaceContext[]>
+  setBootstrapComplete: Dispatch<SetStateAction<boolean>>
   setActivityLog: Dispatch<SetStateAction<ActivityLogEntry[]>>
   setActiveWorkspaceId: Dispatch<SetStateAction<string | null>>
   setDefaultSessionStrategy: Dispatch<SetStateAction<SessionWorkspaceStrategy>>
@@ -43,6 +44,7 @@ interface UseSentinelBootstrapOptions {
 
 export function useSentinelBootstrap({
   workspacesRef,
+  setBootstrapComplete,
   setActivityLog,
   setActiveWorkspaceId,
   setDefaultSessionStrategy,
@@ -64,6 +66,7 @@ export function useSentinelBootstrap({
     const sentinel = getSentinelBridge()
 
     if (!sentinel) {
+      setBootstrapComplete(true)
       setErrorMessage(missingBridgeMessage())
       return
     }
@@ -231,8 +234,10 @@ export function useSentinelBootstrap({
           return tab
         })
         setTabs(tabsWithMetrics)
+        setBootstrapComplete(true)
       } catch (error) {
         if (!disposed) {
+          setBootstrapComplete(true)
           setErrorMessage(`Failed to initialize Sentinel: ${getErrorMessage(error)}`)
         }
       }
@@ -253,6 +258,7 @@ export function useSentinelBootstrap({
   }, [
     setActivityLog,
     setActiveWorkspaceId,
+    setBootstrapComplete,
     setDefaultSessionStrategy,
     setErrorMessage,
     setIdeTerminalState,

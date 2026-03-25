@@ -6,6 +6,7 @@ pub enum SessionStatus {
     Starting,
     Ready,
     Closing,
+    Paused,
     Closed,
     Error,
 }
@@ -155,6 +156,8 @@ pub struct WorkspaceSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityLogEntry {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     pub timestamp: i64,
     pub scope: String,
     pub status: String,

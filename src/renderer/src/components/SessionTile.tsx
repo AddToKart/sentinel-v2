@@ -13,12 +13,14 @@ import {
   Maximize2,
   MemoryStick,
   Minimize2,
+  Pause,
+  Play,
   RefreshCw,
   Search,
+  Square,
   Sparkles,
   TerminalSquare,
   Trash2,
-  X
 } from 'lucide-react'
 
 import type {
@@ -41,6 +43,9 @@ interface SessionTileProps {
   historyEntries: SessionCommandEntry[]
   modifiedPaths: string[]
   onClose: (sessionId: string) => Promise<void>
+  onPause: (sessionId: string) => Promise<void>
+  onResume: (sessionId: string) => Promise<void>
+  onDelete: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
   applySession: () => Promise<SessionApplyResult>
   commitSession: (message: string) => Promise<SessionCommitResult>
@@ -54,12 +59,14 @@ function statusColor(status: SessionSummary['status']): string {
   if (status === 'ready') return 'bg-emerald-400'
   if (status === 'starting') return 'bg-amber-400 animate-pulse'
   if (status === 'closing') return 'bg-sky-400 animate-pulse'
+  if (status === 'paused') return 'bg-amber-300'
   if (status === 'error') return 'bg-rose-400'
   return 'bg-white/20'
 }
 
 function cleanupLabel(session: SessionSummary): string {
   if (session.status === 'closing') return 'closing'
+  if (session.status === 'paused') return 'paused'
   if (session.cleanupState === 'removed') return 'cleaned'
   if (session.cleanupState === 'preserved') return 'preserved'
   if (session.cleanupState === 'failed') return 'cleanup failed'
@@ -93,6 +100,9 @@ export function SessionTile({
   historyEntries,
   modifiedPaths,
   onClose,
+  onPause,
+  onResume,
+  onDelete,
   onToggleMaximize,
   applySession,
   commitSession,
@@ -101,7 +111,10 @@ export function SessionTile({
   fitNonce,
   windowsBuildNumber
 }: SessionTileProps): JSX.Element {
+  const isPaused = session.status === 'paused'
   const isArchived = session.status === 'closed' || session.status === 'error'
+  const isTerminalLive =
+    session.status === 'starting' || session.status === 'ready' || session.status === 'closing'
   const terminalHostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -114,7 +127,9 @@ export function SessionTile({
   const fitFrameRef = useRef<number | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const focusFrameRef = useRef<number | null>(null)
+  const rebuildTimerRef = useRef<number | null>(null)
   const recoveryTimerRef = useRef<number | null>(null)
+  const lastRebuildAtRef = useRef(0)
   const lastGeometryRef = useRef({ width: 0, height: 0, cols: 0, rows: 0 })
 
   const [viewMode, setViewMode] = useState<'terminal' | 'history' | 'review'>('terminal')
@@ -123,6 +138,7 @@ export function SessionTile({
   const [reviewFile, setReviewFile] = useState<string>(modifiedPaths[0] || '')
   const [originalContent, setOriginalContent] = useState('')
   const [modifiedContent, setModifiedContent] = useState('')
+  const [terminalEpoch, setTerminalEpoch] = useState(0)
 
   useEffect(() => {
     sessionStatusRef.current = session.status
@@ -275,6 +291,9 @@ export function SessionTile({
   }
 
   function healTerminalDisplay(): void {
+    if (!isTerminalLive) {
+      return
+    }
     lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
     scheduleTerminalFit(0)
     requestAnimationFrame(() => {
@@ -284,9 +303,30 @@ export function SessionTile({
     })
   }
 
+  function requestTerminalRebuild(delay = 180): void {
+    if (!isTerminalLive || viewModeRef.current !== 'terminal') {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastRebuildAtRef.current < 1500) {
+      return
+    }
+
+    if (rebuildTimerRef.current !== null) {
+      window.clearTimeout(rebuildTimerRef.current)
+    }
+
+    rebuildTimerRef.current = window.setTimeout(() => {
+      rebuildTimerRef.current = null
+      lastRebuildAtRef.current = Date.now()
+      setTerminalEpoch((value) => value + 1)
+    }, delay)
+  }
+
   // Terminal initialization
   useEffect(() => {
-    if (!terminalHostRef.current) return
+    if (!terminalHostRef.current || !isTerminalLive) return
 
     let cancelled = false
     let disposeTerminal = () => {}
@@ -353,6 +393,10 @@ export function SessionTile({
           cancelAnimationFrame(focusFrameRef.current)
           focusFrameRef.current = null
         }
+        if (rebuildTimerRef.current !== null) {
+          window.clearTimeout(rebuildTimerRef.current)
+          rebuildTimerRef.current = null
+        }
         writeQueueRef.current = []
         writeInFlightRef.current = false
         lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
@@ -375,10 +419,10 @@ export function SessionTile({
       }
       disposeTerminal()
     }
-  }, [session.id, windowsBuildNumber])
+  }, [isTerminalLive, session.id, terminalEpoch, windowsBuildNumber])
 
   useEffect(() => {
-    if (viewMode !== 'terminal' || session.status !== 'ready') {
+    if (!isTerminalLive || viewMode !== 'terminal' || session.status !== 'ready') {
       if (recoveryTimerRef.current !== null) {
         window.clearInterval(recoveryTimerRef.current)
         recoveryTimerRef.current = null
@@ -397,7 +441,7 @@ export function SessionTile({
         recoveryTimerRef.current = null
       }
     }
-  }, [session.id, session.status, viewMode])
+  }, [isTerminalLive, session.id, session.status, viewMode])
 
   // Re-fit on nonce/mode change
   useEffect(() => {
@@ -406,6 +450,7 @@ export function SessionTile({
     requestAnimationFrame(() => {
       if (terminalRef.current) refreshTerminalSurface(terminalRef.current)
     })
+    requestTerminalRebuild(220)
   }, [session.id, fitNonce, viewMode])
 
   useEffect(() => {
@@ -525,7 +570,31 @@ export function SessionTile({
     }
   }
 
+  async function handleDelete(): Promise<void> {
+    if (session.status === 'starting' || session.status === 'ready' || session.status === 'closing') {
+      return
+    }
+
+    const confirmed = confirm(
+      'Delete this saved session from Sentinel? This also removes the preserved workspace if it still exists.'
+    )
+    if (!confirmed) {
+      return
+    }
+
+    await onDelete(session.id)
+  }
+
   const isClosing = session.status === 'closing' || isArchived
+  const canPause = session.status === 'starting' || session.status === 'ready'
+  const canResume = session.status === 'paused'
+  const canStop =
+    session.status === 'starting' ||
+    session.status === 'ready' ||
+    session.status === 'paused' ||
+    ((session.status === 'closed' || session.status === 'error') &&
+      session.cleanupState !== 'removed')
+  const canDelete = session.status === 'paused' || session.status === 'closed' || session.status === 'error'
   const canCommitSession = session.workspaceStrategy === 'git-worktree'
   const commitTitle = 'Commit Worktree Changes'
   const filteredHistory = historyQuery.trim()
@@ -561,14 +630,44 @@ export function SessionTile({
           <button className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('discard')} title="Discard"><Trash2 className="h-2.5 w-2.5" /></button>
           <button className="px-1 text-white/30 hover:text-sentinel-glow transition disabled:opacity-20" disabled={isClosing || opLoading !== null || modifiedPaths.length === 0} onClick={() => handleOp('apply')} title={session.workspaceStrategy === 'sandbox-copy' ? 'Sync to Main Project Files' : 'Merge to Main'}>{session.workspaceStrategy === 'sandbox-copy' ? <CopyCheck className="h-2.5 w-2.5" /> : <GitMerge className="h-2.5 w-2.5" />}</button>
           <div className="mx-1 h-3 w-px bg-white/10" />
-          <button className="px-1 text-white/30 hover:text-sentinel-accent transition disabled:opacity-20" disabled={isClosing} onClick={healTerminalDisplay} title="Recover display">
+          <button
+            className="px-1 text-white/30 hover:text-emerald-300 transition disabled:opacity-20"
+            disabled={!canResume}
+            onClick={() => void onResume(session.id)}
+            title="Resume"
+          >
+            <Play className="h-2.5 w-2.5" />
+          </button>
+          <button
+            className="px-1 text-white/30 hover:text-amber-300 transition disabled:opacity-20"
+            disabled={!canPause}
+            onClick={() => void onPause(session.id)}
+            title="Pause"
+          >
+            <Pause className="h-2.5 w-2.5" />
+          </button>
+          <button
+            className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20"
+            disabled={!canStop}
+            onClick={() => void onClose(session.id)}
+            title="Stop"
+          >
+            <Square className="h-2.5 w-2.5" />
+          </button>
+          <button
+            className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20"
+            disabled={!canDelete}
+            onClick={() => void handleDelete()}
+            title="Delete"
+          >
+            <Trash2 className="h-2.5 w-2.5" />
+          </button>
+          <div className="mx-1 h-3 w-px bg-white/10" />
+          <button className="px-1 text-white/30 hover:text-sentinel-accent transition disabled:opacity-20" disabled={isClosing} onClick={() => requestTerminalRebuild(0)} title="Recover display">
             <RefreshCw className="h-2.5 w-2.5" />
           </button>
           <button className="px-1 text-white/30 hover:text-white transition" onClick={() => onToggleMaximize(session.id)} title={isMaximized ? 'Restore' : 'Maximize'}>
             {isMaximized ? <Minimize2 className="h-2.5 w-2.5" /> : <Maximize2 className="h-2.5 w-2.5" />}
-          </button>
-          <button className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20" disabled={session.status === 'closing' || isArchived} onClick={() => void onClose(session.id)} title="Close">
-            <X className="h-2.5 w-2.5" />
           </button>
         </div>
       </div>
@@ -577,7 +676,32 @@ export function SessionTile({
       <div className="relative flex-1 min-h-0 overflow-hidden">
         {/* Terminal */}
         <div className={`absolute inset-0 ${viewMode === 'terminal' ? 'z-10' : 'z-0 pointer-events-none'}`}>
-          <div className="terminal-host h-full w-full overflow-hidden" onMouseDown={() => scheduleTerminalFocus()} onWheel={handleWheel} ref={terminalHostRef} />
+          {isTerminalLive ? (
+            <div className="terminal-host h-full w-full overflow-hidden" onMouseDown={() => scheduleTerminalFocus()} onWheel={handleWheel} ref={terminalHostRef} />
+          ) : (
+            <div className="flex h-full items-center justify-center bg-[#04070b] p-6 text-center">
+              <div className="max-w-sm space-y-3">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.03] text-sentinel-mist">
+                  {isPaused ? <Pause className="h-4 w-4 text-amber-300" /> : <Square className="h-4 w-4 text-white/70" />}
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/85">
+                    {isPaused ? 'Session Paused' : session.status === 'closed' ? 'Session Stopped' : 'Session Unavailable'}
+                  </p>
+                  <p className="text-xs leading-6 text-sentinel-mist">
+                    {isPaused
+                      ? 'The agent process has been paused and the workspace was preserved. Resume the session to keep working, or stop/delete it when you are done.'
+                      : session.cleanupState === 'removed'
+                        ? 'This session is no longer running and its workspace has already been cleaned up.'
+                        : 'This session is no longer running. Stop it to finish cleanup, or delete it if you no longer need the preserved workspace.'}
+                  </p>
+                  {session.error && (
+                    <p className="text-[11px] leading-5 text-rose-300/90">{session.error}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Review / Diff */}

@@ -7,8 +7,8 @@ use database::Database;
 use std::sync::Arc;
 
 use models::{
-    BootstrapPayload, CommandHistoryEntry, CreateSessionInput, FileChangeEntry,
-    IdeTerminalState, ProjectState, SessionApplyResult, SessionCommitResult, SessionSummary,
+    BootstrapPayload, CommandHistoryEntry, CreateSessionInput, FileChangeEntry, IdeTerminalState,
+    ProjectState, SessionApplyResult, SessionCommitResult, SessionSummary,
     SessionWorkspaceStrategy, SnapshotSummary, TabSummary, WorkspaceAnalytics, WorkspaceContext,
     WorkspacePreferences,
 };
@@ -136,6 +136,42 @@ async fn close_session(
 }
 
 #[tauri::command]
+async fn pause_session(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    session_id: String,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.pause_session(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn resume_session(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    session_id: String,
+) -> Result<SessionSummary, String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.resume_session(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_session(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    session_id: String,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.delete_session(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn resize_session(
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
@@ -241,19 +277,25 @@ fn write_ide_file(
 }
 
 #[tauri::command]
-fn apply_ide_workspace(
+async fn apply_ide_workspace(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
 ) -> Result<SessionApplyResult, String> {
-    state.apply_ide_workspace(&app)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.apply_ide_workspace(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn discard_ide_workspace_changes(
+async fn discard_ide_workspace_changes(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
 ) -> Result<(), String> {
-    state.discard_ide_workspace_changes(&app)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.discard_ide_workspace_changes(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -282,31 +324,40 @@ fn write_session_file(
 }
 
 #[tauri::command]
-fn apply_session(
+async fn apply_session(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
 ) -> Result<SessionApplyResult, String> {
-    state.apply_session(&app, &session_id)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.apply_session(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn commit_session(
+async fn commit_session(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
     message: String,
 ) -> Result<SessionCommitResult, String> {
-    state.commit_session(&app, &session_id, &message)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.commit_session(&app, &session_id, &message))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn discard_session_changes(
+async fn discard_session_changes(
     app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
 ) -> Result<(), String> {
-    state.discard_session_changes(&app, &session_id)
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.discard_session_changes(&app, &session_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -445,6 +496,9 @@ pub fn run() {
             set_default_session_strategy,
             create_session,
             close_session,
+            pause_session,
+            resume_session,
+            delete_session,
             resize_session,
             send_input,
             ensure_ide_terminal,

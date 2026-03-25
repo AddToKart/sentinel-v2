@@ -1,4 +1,4 @@
-export type SessionStatus = 'starting' | 'ready' | 'closing' | 'closed' | 'error'
+export type SessionStatus = 'starting' | 'ready' | 'closing' | 'paused' | 'closed' | 'error'
 
 export type CleanupState = 'active' | 'removed' | 'preserved' | 'failed'
 
@@ -134,6 +134,7 @@ export interface WorkspaceSummary {
 
 export interface ActivityLogEntry {
   id: string
+  workspaceId?: string
   timestamp: number
   scope: 'git' | 'workspace'
   status: 'started' | 'completed' | 'failed'
@@ -317,6 +318,9 @@ export interface SentinelApi {
   setDefaultSessionStrategy: (strategy: SessionWorkspaceStrategy) => Promise<WorkspacePreferences>
   createSession: (input?: CreateSessionInput) => Promise<SessionSummary>
   closeSession: (sessionId: string) => Promise<void>
+  pauseSession: (sessionId: string) => Promise<void>
+  resumeSession: (sessionId: string) => Promise<SessionSummary>
+  deleteSession: (sessionId: string) => Promise<void>
   resizeSession: (sessionId: string, cols: number, rows: number) => Promise<void>
   sendInput: (sessionId: string, data: string) => Promise<void>
   ensureIdeTerminal: () => Promise<IdeTerminalState>
