@@ -1,20 +1,26 @@
+mod database;
 mod models;
 #[path = "sentinelApi/mod.rs"]
 mod sentinel;
 
+use database::Database;
 use std::sync::Arc;
 
 use models::{
-    BootstrapPayload, CreateSessionInput, IdeTerminalState, ProjectState, SessionApplyResult,
-    SessionCommitResult, SessionSummary, SessionWorkspaceStrategy, TabSummary, WorkspaceContext,
+    BootstrapPayload, CommandHistoryEntry, CreateSessionInput, FileChangeEntry,
+    IdeTerminalState, ProjectState, SessionApplyResult, SessionCommitResult, SessionSummary,
+    SessionWorkspaceStrategy, SnapshotSummary, TabSummary, WorkspaceAnalytics, WorkspaceContext,
     WorkspacePreferences,
 };
 use sentinel::SentinelManager;
-use tauri::{AppHandle, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State};
 
 #[tauri::command]
-fn bootstrap(state: State<'_, Arc<SentinelManager>>) -> Result<BootstrapPayload, String> {
-    Ok(state.bootstrap())
+fn bootstrap(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+) -> Result<BootstrapPayload, String> {
+    state.bootstrap(&app)
 }
 
 #[tauri::command]
@@ -141,11 +147,12 @@ fn resize_session(
 
 #[tauri::command]
 fn send_input(
+    app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
     data: String,
 ) -> Result<(), String> {
-    state.send_input(&session_id, &data)
+    state.send_input(&app, &session_id, &data)
 }
 
 #[tauri::command]
@@ -265,12 +272,13 @@ fn read_file_diff(
 
 #[tauri::command]
 fn write_session_file(
+    app: AppHandle,
     state: State<'_, Arc<SentinelManager>>,
     session_id: String,
     relative_path: String,
     content: String,
 ) -> Result<(), String> {
-    state.write_session_file(&session_id, &relative_path, &content)
+    state.write_session_file(&app, &session_id, &relative_path, &content)
 }
 
 #[tauri::command]
@@ -317,6 +325,84 @@ fn open_in_system_editor(
     state.open_in_system_editor(&file_path)
 }
 
+#[tauri::command]
+fn search_command_history(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<CommandHistoryEntry>, String> {
+    state.search_command_history(&app, &workspace_id, &query, limit)
+}
+
+#[tauri::command]
+fn get_file_change_timeline(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    file_path: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<FileChangeEntry>, String> {
+    state.get_file_change_timeline(&app, &workspace_id, file_path.as_deref(), limit)
+}
+
+#[tauri::command]
+fn get_workspace_analytics(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<WorkspaceAnalytics, String> {
+    state.get_workspace_analytics(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn export_audit_log(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    start_timestamp: Option<i64>,
+    end_timestamp: Option<i64>,
+    format: Option<String>,
+) -> Result<String, String> {
+    state.export_audit_log(
+        &app,
+        &workspace_id,
+        start_timestamp,
+        end_timestamp,
+        format.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn create_workspace_snapshot(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    name: String,
+    description: Option<String>,
+) -> Result<SnapshotSummary, String> {
+    state.create_workspace_snapshot(&app, &workspace_id, &name, description)
+}
+
+#[tauri::command]
+fn restore_workspace_snapshot(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    snapshot_id: String,
+) -> Result<WorkspaceContext, String> {
+    state.restore_workspace_snapshot(&app, &snapshot_id)
+}
+
+#[tauri::command]
+fn list_workspace_snapshots(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<Vec<SnapshotSummary>, String> {
+    state.list_workspace_snapshots(&app, &workspace_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(SentinelManager::new());
@@ -328,6 +414,19 @@ pub fn run() {
         .setup({
             let manager = manager.clone();
             move |app| {
+                // Initialize the SQLite database
+                let app_data_dir = app
+                    .path()
+                    .app_data_dir()
+                    .expect("Failed to resolve app data directory");
+                let db = tauri::async_runtime::block_on(Database::init(&app_data_dir))
+                    .expect("Failed to initialize SQLite database");
+                let db = Arc::new(db);
+                app.manage(db);
+                manager
+                    .hydrate_from_database(&app.handle())
+                    .expect("Failed to hydrate SQLite state");
+
                 manager.start_refresh_loop(app.handle().clone());
                 Ok(())
             }
@@ -365,7 +464,14 @@ pub fn run() {
             create_standalone_terminal,
             close_tab,
             resize_tab,
-            send_tab_input
+            send_tab_input,
+            search_command_history,
+            get_file_change_timeline,
+            get_workspace_analytics,
+            export_audit_log,
+            create_workspace_snapshot,
+            restore_workspace_snapshot,
+            list_workspace_snapshots
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -166,6 +166,94 @@ pub struct ActivityLogEntry {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CommandHistoryEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub workspace_id: String,
+    pub command: String,
+    pub timestamp: i64,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChangeEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub workspace_id: String,
+    pub file_path: String,
+    pub change_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_hash: Option<String>,
+    pub timestamp: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogEntry {
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    pub timestamp: i64,
+    pub action_type: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAnalytics {
+    pub workspace_id: String,
+    pub total_sessions: i64,
+    pub active_sessions: i64,
+    pub total_tabs: i64,
+    pub active_tabs: i64,
+    pub total_commands: i64,
+    pub total_file_changes: i64,
+    pub unique_files_changed: i64,
+    pub total_activity_entries: i64,
+    pub total_snapshots: i64,
+    pub average_session_cpu_percent: f64,
+    pub average_session_memory_mb: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_activity_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_snapshot_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub file_count: i64,
+    pub session_count: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionCommandEntry {
     pub id: String,
     pub command: String,

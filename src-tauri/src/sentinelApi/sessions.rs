@@ -101,17 +101,18 @@ impl SentinelManager {
             last_diff_scanned_at: None,
         };
 
+        let mut startup_history_entry = None;
         if let Some(command) = input
             .startup_command
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            append_history_entry(&mut record.history, command, "startup");
+            startup_history_entry = append_history_entry(&mut record.history, command, "startup");
             write_terminal(&record.writer, format!("{command}\r").as_bytes())?;
         }
 
-        {
+        let workspace = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(workspace) = inner.workspaces.get_mut(&workspace_id) {
                 workspace.session_ids.push(summary.id.clone());
@@ -119,7 +120,30 @@ impl SentinelManager {
             }
             inner.sessions.insert(session_id, record);
             update_workspace_summary(&mut inner);
+            inner.workspaces.get(&workspace_id).cloned()
+        };
+
+        self.persist_session_created(app, &summary)?;
+        if let Some(workspace) = workspace.as_ref() {
+            self.persist_workspace(app, workspace)?;
         }
+        if let Some(entry) = startup_history_entry.as_ref() {
+            self.persist_command_entry(app, &summary, entry)?;
+        }
+        self.persist_audit_event(
+            app,
+            Some(&summary.workspace_id),
+            Some(&summary.id),
+            None,
+            "session-created",
+            "session",
+            &summary.id,
+            Some(serde_json::json!({
+                "label": summary.label.clone(),
+                "workspaceStrategy": summary.workspace_strategy,
+                "workspacePath": summary.workspace_path.clone(),
+            })),
+        );
 
         emit_event(app, EVENT_SESSION_STATE, &summary);
         self.emit_session_metrics(app, &summary.id);
@@ -130,19 +154,29 @@ impl SentinelManager {
         Ok(summary)
     }
 
-    pub fn send_input(&self, session_id: &str, data: &str) -> Result<(), String> {
-        let writer = {
+    pub fn send_input(&self, app: &AppHandle, session_id: &str, data: &str) -> Result<(), String> {
+        let (writer, summary, entries) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
                 .get_mut(session_id)
                 .ok_or_else(|| "Session not found.".to_string())?;
-            track_command_input(&mut record.command_buffer, &mut record.history, data);
-            record.writer.clone()
+            let entries = track_command_input(&mut record.command_buffer, &mut record.history, data);
+            (record.writer.clone(), record.summary.clone(), entries)
         };
 
         match write_terminal(&writer, data.as_bytes()) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                for entry in &entries {
+                    if let Err(error) = self.persist_command_entry(app, &summary, entry) {
+                        log_persistence_error("persist session command", &error);
+                    }
+                }
+                if !entries.is_empty() {
+                    self.emit_session_history(app, session_id);
+                }
+                Ok(())
+            }
             Err(e) => {
                 eprintln!("[sentinel] Failed to send input to session {}: {}", session_id, e);
                 Err(e)
@@ -172,7 +206,7 @@ impl SentinelManager {
     }
 
     pub fn close_session(self: &Arc<Self>, app: &AppHandle, session_id: &str) -> Result<(), String> {
-        let (pid, killer, should_emit, should_wait_for_shutdown) = {
+        let (pid, killer, should_emit, should_wait_for_shutdown, summary) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .sessions
@@ -197,8 +231,21 @@ impl SentinelManager {
                 record.killer.clone(),
                 should_wait_for_shutdown,
                 should_wait_for_shutdown,
+                record.summary.clone(),
             )
         };
+
+        self.persist_session_status(app, &summary)?;
+        self.persist_audit_event(
+            app,
+            Some(&summary.workspace_id),
+            Some(&summary.id),
+            None,
+            "session-close-requested",
+            "session",
+            &summary.id,
+            None,
+        );
 
         if should_emit {
             self.emit_session_diff(app, session_id);
@@ -252,20 +299,25 @@ impl SentinelManager {
             sleep_duration_ms = (sleep_duration_ms * 2).min(max_sleep_ms);
         }
 
-        let removed_workspace_id = {
+        let updated_workspace = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let workspace_id = inner
                 .sessions
                 .remove(&session_id)
                 .map(|record| record.summary.workspace_id);
             if let Some(workspace_id) = workspace_id.as_deref() {
-                remove_session_from_workspace(&mut inner, workspace_id, &session_id);
+                if let Some(workspace) = inner.workspaces.get_mut(workspace_id) {
+                    workspace.last_active_at = now_millis();
+                }
                 update_workspace_summary(&mut inner);
             }
-            workspace_id
+            workspace_id.and_then(|workspace_id| inner.workspaces.get(&workspace_id).cloned())
         };
-        if let Some(workspace_id) = removed_workspace_id {
-            self.emit_workspace_updated(&app, &workspace_id);
+        if let Some(workspace) = updated_workspace.as_ref() {
+            if let Err(error) = self.persist_workspace(&app, workspace) {
+                log_persistence_error("persist workspace after session removal", &error);
+            }
+            self.emit_workspace_updated(&app, &workspace.id);
             self.emit_workspace_state(&app);
         }
     }

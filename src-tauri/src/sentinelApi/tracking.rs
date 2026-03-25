@@ -168,34 +168,40 @@ fn collect_process_tree_snapshots(
         .collect())
 }
 
-fn append_history_entry(history: &mut Vec<SessionCommandEntry>, command: &str, source: &str) {
+fn append_history_entry(
+    history: &mut Vec<SessionCommandEntry>,
+    command: &str,
+    source: &str,
+) -> Option<SessionCommandEntry> {
     let normalized = command.trim();
     if normalized.is_empty() {
-        return;
+        return None;
     }
-    history.insert(
-        0,
-        SessionCommandEntry {
-            id: format!("{}-{}", create_timestamp(), create_token()),
-            command: normalized.to_string(),
-            timestamp: now_millis(),
-            source: source.to_string(),
-        },
-    );
+    let entry = SessionCommandEntry {
+        id: format!("{}-{}", create_timestamp(), create_token()),
+        command: normalized.to_string(),
+        timestamp: now_millis(),
+        source: source.to_string(),
+    };
+    history.insert(0, entry.clone());
     if history.len() > 250 {
         history.truncate(250);
     }
+    Some(entry)
 }
 
 fn track_command_input(
     command_buffer: &mut String,
     history: &mut Vec<SessionCommandEntry>,
     data: &str,
-) {
+) -> Vec<SessionCommandEntry> {
+    let mut entries = Vec::new();
     for character in data.chars() {
         match character {
             '\r' | '\n' => {
-                append_history_entry(history, command_buffer, "interactive");
+                if let Some(entry) = append_history_entry(history, command_buffer, "interactive") {
+                    entries.push(entry);
+                }
                 command_buffer.clear();
             }
             '\u{0003}' | '\u{0015}' => {
@@ -209,6 +215,7 @@ fn track_command_input(
             _ => {}
         }
     }
+    entries
 }
 
 fn resize_terminal(master: &SharedMaster, cols: u16, rows: u16) -> Result<(), String> {

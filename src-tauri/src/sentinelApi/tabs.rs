@@ -59,7 +59,7 @@ impl SentinelManager {
             last_sampled_at: None,
         };
 
-        {
+        let workspace = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(workspace) = inner.workspaces.get_mut(&workspace_id) {
                 workspace.tab_ids.push(summary.id.clone());
@@ -67,7 +67,26 @@ impl SentinelManager {
             }
             inner.tabs.insert(tab_id.clone(), record);
             update_workspace_summary(&mut inner);
+            inner.workspaces.get(&workspace_id).cloned()
+        };
+
+        self.persist_tab_created(app, &summary)?;
+        if let Some(workspace) = workspace.as_ref() {
+            self.persist_workspace(app, workspace)?;
         }
+        self.persist_audit_event(
+            app,
+            Some(&summary.workspace_id),
+            None,
+            Some(&summary.id),
+            "tab-created",
+            "tab",
+            &summary.id,
+            Some(serde_json::json!({
+                "label": summary.label.clone(),
+                "cwd": summary.cwd.clone(),
+            })),
+        );
 
         emit_event(
             app,
@@ -88,7 +107,7 @@ impl SentinelManager {
     }
 
     pub fn close_tab(self: &Arc<Self>, app: &AppHandle, tab_id: &str) -> Result<(), String> {
-        let (pid, killer, should_wait_for_shutdown, workspace_id) = {
+        let (pid, killer, should_wait_for_shutdown, workspace_id, summary) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let record = inner
                 .tabs
@@ -108,8 +127,21 @@ impl SentinelManager {
                 record.killer.clone(),
                 true,
                 record.summary.workspace_id.clone(),
+                record.summary.clone(),
             )
         };
+
+        self.persist_tab_status(app, &summary)?;
+        self.persist_audit_event(
+            app,
+            Some(&summary.workspace_id),
+            None,
+            Some(&summary.id),
+            "tab-close-requested",
+            "tab",
+            &summary.id,
+            None,
+        );
 
         let _ = kill_process_tree(&killer);
         let _ = terminate_process_id(pid);
@@ -304,6 +336,39 @@ impl SentinelManager {
     }
 
     fn handle_tab_output(&self, app: &AppHandle, tab_id: &str, chunk: String) {
+        let ready_summary = {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(record) = inner.tabs.get_mut(tab_id) else {
+                return;
+            };
+
+            if record.summary.status == TabStatus::Starting {
+                record.summary.status = TabStatus::Ready;
+                Some(record.summary.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(summary) = ready_summary.as_ref() {
+            if let Err(error) = self.persist_tab_status(app, summary) {
+                log_persistence_error("persist ready tab state", &error);
+            }
+            emit_event(
+                app,
+                EVENT_TAB_STATE,
+                &TabStateUpdate {
+                    tab_id: summary.id.clone(),
+                    workspace_id: summary.workspace_id.clone(),
+                    status: summary.status,
+                    pid: summary.pid,
+                    exit_code: summary.exit_code,
+                    error: summary.error.clone(),
+                },
+            );
+            self.emit_workspace_state(app);
+        }
+
         emit_event(
             app,
             EVENT_TAB_OUTPUT,
@@ -357,6 +422,7 @@ impl SentinelManager {
         let should_emit = !record.close_requested;
 
         let final_status = record.summary.status.clone();
+        let final_summary = record.summary.clone();
 
         let state_update = TabStateUpdate {
             tab_id: tab_id.clone(),
@@ -368,10 +434,36 @@ impl SentinelManager {
         };
 
         inner.tabs.remove(&tab_id);
-        remove_tab_from_workspace(&mut inner, &workspace_id, &tab_id);
+        if let Some(workspace) = inner.workspaces.get_mut(&workspace_id) {
+            workspace.last_active_at = now_millis();
+        }
         update_workspace_summary(&mut inner);
+        let workspace = inner.workspaces.get(&workspace_id).cloned();
 
         drop(inner);
+
+        if let Err(error) = self.persist_tab_status(&app, &final_summary) {
+            log_persistence_error("persist finalized tab state", &error);
+        }
+        if let Some(workspace) = workspace.as_ref() {
+            if let Err(error) = self.persist_workspace(&app, workspace) {
+                log_persistence_error("persist workspace after tab removal", &error);
+            }
+        }
+        self.persist_audit_event(
+            &app,
+            Some(&final_summary.workspace_id),
+            None,
+            Some(&final_summary.id),
+            "tab-finalized",
+            "tab",
+            &final_summary.id,
+            Some(serde_json::json!({
+                "status": final_summary.status,
+                "exitCode": final_summary.exit_code,
+                "error": final_summary.error,
+            })),
+        );
 
         if should_emit {
             emit_event(&app, EVENT_TAB_STATE, &state_update);
@@ -443,7 +535,7 @@ impl SentinelManager {
             process_count: snapshot.process_count,
         };
 
-        {
+        let summary = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.tabs.get_mut(tab_id) else {
                 return;
@@ -453,6 +545,13 @@ impl SentinelManager {
             record.tracked_process_ids = snapshot.process_ids.clone();
             record.last_cpu_total_seconds = Some(snapshot.cpu_total_seconds);
             record.last_sampled_at = Some(now);
+            Some(record.summary.clone())
+        };
+
+        if let Some(summary) = summary.as_ref() {
+            if let Err(error) = self.persist_tab_metrics(app, summary, now) {
+                log_persistence_error("persist tab metrics", &error);
+            }
         }
 
         emit_event(

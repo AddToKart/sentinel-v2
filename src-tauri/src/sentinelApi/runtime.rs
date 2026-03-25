@@ -12,6 +12,9 @@ impl SentinelManager {
         }
 
         if let Some(summary) = emit_state {
+            if let Err(error) = self.persist_session_status(app, &summary) {
+                log_persistence_error("persist ready session state", &error);
+            }
             emit_event(app, EVENT_SESSION_STATE, &summary);
             self.emit_workspace_state(app);
         }
@@ -24,17 +27,24 @@ impl SentinelManager {
 
     fn handle_ide_output(&self, app: &AppHandle, data: String) {
         let mut emit_state = None;
+        let mut workspace_id = None;
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(record) = inner.ide.record.as_mut() {
                 if record.state.status == IdeStatus::Starting {
                     record.state.status = IdeStatus::Ready;
                     emit_state = Some(record.state.clone());
+                    workspace_id = inner.active_workspace_id.clone();
                 }
             }
         }
 
         if let Some(state) = emit_state {
+            if let Some(workspace_id) = workspace_id.as_deref() {
+                if let Err(error) = self.persist_ide_state(app, workspace_id, &state) {
+                    log_persistence_error("persist ready IDE terminal state", &error);
+                }
+            }
             emit_event(app, EVENT_IDE_STATE, &state);
         }
         emit_event(app, EVENT_IDE_OUTPUT, &serde_json::json!({ "data": data }));
@@ -92,8 +102,9 @@ impl SentinelManager {
             cleanup_input.3.as_deref(),
         );
 
-        {
+        let final_summary = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let mut final_summary = None;
             if let Some(record) = inner.sessions.get_mut(&session_id) {
                 match cleanup_result {
                     Ok(cleanup_state) => {
@@ -106,8 +117,31 @@ impl SentinelManager {
                         }
                     }
                 }
-                update_workspace_summary(&mut inner);
+                final_summary = Some(record.summary.clone());
             }
+            update_workspace_summary(&mut inner);
+            final_summary
+        };
+
+        if let Some(summary) = final_summary.as_ref() {
+            if let Err(error) = self.persist_session_status(&app, summary) {
+                log_persistence_error("persist finalized session state", &error);
+            }
+            self.persist_audit_event(
+                &app,
+                Some(&summary.workspace_id),
+                Some(&summary.id),
+                None,
+                "session-finalized",
+                "session",
+                &summary.id,
+                Some(serde_json::json!({
+                    "status": summary.status,
+                    "cleanupState": summary.cleanup_state,
+                    "exitCode": summary.exit_code,
+                    "error": summary.error,
+                })),
+            );
         }
 
         self.emit_session_metrics(&app, &session_id);
@@ -122,7 +156,7 @@ impl SentinelManager {
         exit_code: Option<i32>,
         forced_error: Option<String>,
     ) {
-        let state = {
+        let (state, workspace_id) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let Some(record) = inner.ide.record.as_mut() else {
                 return;
@@ -148,8 +182,13 @@ impl SentinelManager {
                     None
                 }
             });
-            record.state.clone()
+            (record.state.clone(), inner.active_workspace_id.clone())
         };
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            if let Err(error) = self.persist_ide_state(&app, workspace_id, &state) {
+                log_persistence_error("persist finalized IDE terminal state", &error);
+            }
+        }
         emit_event(&app, EVENT_IDE_STATE, &state);
     }
 
@@ -204,7 +243,7 @@ impl SentinelManager {
                     .and_then(|pid| snapshot_map.get(&pid).cloned())
             };
 
-            {
+            let summary = {
                 let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(record) = inner.sessions.get_mut(session_id) {
                     if let Some(snapshot) = maybe_snapshot {
@@ -246,6 +285,14 @@ impl SentinelManager {
                         record.summary.metrics = ProcessMetrics::default();
                         record.tracked_process_ids.clear();
                     }
+                    Some(record.summary.clone())
+                } else {
+                    None
+                }
+            };
+            if let Some(summary) = summary.as_ref() {
+                if let Err(error) = self.persist_session_metrics(app, summary, sampled_at) {
+                    log_persistence_error("persist session metrics", &error);
                 }
             }
             self.emit_session_metrics(app, session_id);
@@ -308,20 +355,26 @@ impl SentinelManager {
             refresh_sandbox_workspace_diffs(&workspace_path, sandbox_state)?
         };
 
-        let should_emit = {
+        let persisted_state = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let workspace_id = inner.active_workspace_id.clone();
             if let Some(record) = inner.ide.record.as_mut() {
                 if record.state.modified_paths != modified_paths {
                     record.state.modified_paths = modified_paths;
-                    true
+                    workspace_id.map(|workspace_id| (workspace_id, record.state.clone()))
                 } else {
-                    false
+                    None
                 }
             } else {
-                false
+                None
             }
         };
-        if should_emit {
+        if let Some((workspace_id, state)) = persisted_state.as_ref() {
+            if let Err(error) = self.persist_ide_state(app, workspace_id, state) {
+                log_persistence_error("persist IDE terminal diff state", &error);
+            }
+        }
+        if persisted_state.is_some() {
             self.emit_ide_state(app);
         }
         Ok(())
@@ -434,7 +487,7 @@ impl SentinelManager {
         cwd: String,
         detail: Option<String>,
     ) {
-        let entry = {
+        let (entry, workspace_id) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let entry = ActivityLogEntry {
                 id: format!("{}-{}", create_timestamp(), create_token()),
@@ -449,8 +502,12 @@ impl SentinelManager {
             if inner.activity_log.len() > 120 {
                 inner.activity_log.truncate(120);
             }
-            entry
+            (entry, inner.active_workspace_id.clone())
         };
+
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            self.persist_activity_entry(app, workspace_id, &entry, None);
+        }
         emit_event(app, EVENT_ACTIVITY_LOG, &entry);
     }
 }

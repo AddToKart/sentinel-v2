@@ -112,8 +112,9 @@ impl SentinelManager {
             modified_paths,
         };
 
-        {
+        let workspace_id = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let workspace_id = inner.active_workspace_id.clone();
             inner.ide.record = Some(IdeRecord {
                 state: state.clone(),
                 master: handles.master,
@@ -123,6 +124,11 @@ impl SentinelManager {
                 close_requested: false,
                 finalized: false,
             });
+            workspace_id
+        };
+
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            self.persist_ide_state(app, workspace_id, &state)?;
         }
 
         emit_event(app, EVENT_IDE_STATE, &state);
@@ -242,12 +248,21 @@ impl SentinelManager {
         match apply_ide_workspace_impl(&project_root, &workspace_path, sandbox_state) {
             Ok(applied) => {
                 let mut result = applied.result;
-                result.remaining_paths = applied.modified_paths.clone();
-                {
+                let persisted_state = {
                     let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                    let workspace_id = inner.active_workspace_id.clone();
+                    result.remaining_paths = applied.modified_paths.clone();
                     inner.ide.sandbox_state = Some(applied.sandbox_state.clone());
                     if let Some(record) = inner.ide.record.as_mut() {
                         record.state.modified_paths = applied.modified_paths.clone();
+                        workspace_id.map(|workspace_id| (workspace_id, record.state.clone()))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((workspace_id, state)) = persisted_state {
+                    if let Err(error) = self.persist_ide_state(app, &workspace_id, &state) {
+                        log_persistence_error("persist IDE terminal state after apply", &error);
                     }
                 }
                 self.push_activity_log(
@@ -314,11 +329,20 @@ impl SentinelManager {
 
         match discard_ide_workspace_impl(&project_root, &workspace_path) {
             Ok(discarded) => {
-                {
+                let persisted_state = {
                     let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                    let workspace_id = inner.active_workspace_id.clone();
                     inner.ide.sandbox_state = Some(discarded.sandbox_state);
                     if let Some(record) = inner.ide.record.as_mut() {
                         record.state.modified_paths = discarded.modified_paths;
+                        workspace_id.map(|workspace_id| (workspace_id, record.state.clone()))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((workspace_id, state)) = persisted_state {
+                    if let Err(error) = self.persist_ide_state(app, &workspace_id, &state) {
+                        log_persistence_error("persist IDE terminal state after discard", &error);
                     }
                 }
                 self.push_activity_log(

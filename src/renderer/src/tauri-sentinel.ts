@@ -5,11 +5,14 @@ import { toError } from './error-utils'
 
 import type {
   ActivityLogEntry,
+  CommandHistoryEntry,
   BootstrapPayload,
   CreateSessionInput,
+  FileChangeEntry,
   IdeTerminalOutputEvent,
   IdeTerminalState,
   ProjectState,
+  SnapshotSummary,
   SessionApplyResult,
   SessionCommitResult,
   SessionDiffUpdate,
@@ -19,6 +22,7 @@ import type {
   SessionOutputEvent,
   SessionSummary,
   SessionWorkspaceStrategy,
+  WorkspaceAnalytics,
   TabMetricsUpdate,
   TabOutputEvent,
   TabStateUpdate,
@@ -275,6 +279,49 @@ const api: SentinelApi = {
   },
   sendTabInput(tabId: string, data: string) {
     return invokeCommand<void>('send_tab_input', { tabId, data })
+  },
+  searchCommandHistory(workspaceId: string, query: string, limit?: number) {
+    return invokeCommand<CommandHistoryEntry[]>('search_command_history', {
+      workspaceId,
+      query,
+      limit
+    })
+  },
+  getFileChangeTimeline(workspaceId: string, filePath?: string, limit?: number) {
+    return invokeCommand<FileChangeEntry[]>('get_file_change_timeline', {
+      workspaceId,
+      filePath,
+      limit
+    })
+  },
+  getWorkspaceAnalytics(workspaceId: string) {
+    return invokeCommand<WorkspaceAnalytics>('get_workspace_analytics', { workspaceId })
+  },
+  exportAuditLog(
+    workspaceId: string,
+    startTimestamp?: number,
+    endTimestamp?: number,
+    format?: 'json' | 'csv'
+  ) {
+    return invokeCommand<string>('export_audit_log', {
+      workspaceId,
+      startTimestamp,
+      endTimestamp,
+      format
+    })
+  },
+  createWorkspaceSnapshot(workspaceId: string, name: string, description?: string) {
+    return invokeCommand<SnapshotSummary>('create_workspace_snapshot', {
+      workspaceId,
+      name,
+      description
+    })
+  },
+  restoreWorkspaceSnapshot(snapshotId: string) {
+    return invokeCommand<WorkspaceContext>('restore_workspace_snapshot', { snapshotId })
+  },
+  listWorkspaceSnapshots(workspaceId: string) {
+    return invokeCommand<SnapshotSummary[]>('list_workspace_snapshots', { workspaceId })
   },
   onTabOutput(listener: (event: TabOutputEvent) => void) {
     return subscribe<TabOutputEvent>('sentinel:tab-output', listener)

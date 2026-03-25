@@ -116,16 +116,12 @@ export function useSentinelBootstrap({
           const index = current.findIndex((existing) => existing.id === session.id)
 
           if (index >= 0) {
-            if (session.status === 'closed') {
-              return current.filter((existing) => existing.id !== session.id)
-            }
-
             const next = [...current]
             next[index] = session
             return next
           }
 
-          if (session.status === 'closed' || !workspaceExists) {
+          if (!workspaceExists) {
             return current
           }
 

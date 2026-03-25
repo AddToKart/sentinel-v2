@@ -78,20 +78,6 @@ fn set_active_workspace_locked(
     Ok(workspace)
 }
 
-fn remove_session_from_workspace(inner: &mut SentinelState, workspace_id: &str, session_id: &str) {
-    if let Some(workspace) = inner.workspaces.get_mut(workspace_id) {
-        workspace.session_ids.retain(|existing_id| existing_id != session_id);
-        workspace.last_active_at = now_millis();
-    }
-}
-
-fn remove_tab_from_workspace(inner: &mut SentinelState, workspace_id: &str, tab_id: &str) {
-    if let Some(workspace) = inner.workspaces.get_mut(workspace_id) {
-        workspace.tab_ids.retain(|existing_id| existing_id != tab_id);
-        workspace.last_active_at = now_millis();
-    }
-}
-
 impl SentinelManager {
     pub fn create_workspace(
         &self,
@@ -143,6 +129,27 @@ impl SentinelManager {
             (workspace, created)
         };
 
+        self.persist_workspace(app, &workspace)?;
+        self.persist_active_workspace_selection(app, Some(&workspace.id))?;
+        self.persist_preferences(app)?;
+        self.persist_audit_event(
+            app,
+            Some(&workspace.id),
+            None,
+            None,
+            if created {
+                "workspace-created"
+            } else {
+                "workspace-updated"
+            },
+            "workspace",
+            &workspace.id,
+            Some(serde_json::json!({
+                "name": workspace.name.clone(),
+                "projectPath": workspace.project.path.clone(),
+            })),
+        );
+
         if created {
             self.emit_workspace_created(app, &workspace);
         } else {
@@ -179,13 +186,41 @@ impl SentinelManager {
                 .map(PathBuf::from)
                 .ok_or_else(|| "Workspace not found.".to_string())?
         };
+        let next_project = inspect_project(&next_project_path).unwrap_or_else(|_| ProjectState {
+            path: Some(path_to_string(&next_project_path)),
+            name: next_project_path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .map(str::to_string),
+            branch: None,
+            is_git_repo: false,
+            tree: Vec::new(),
+        });
 
         self.handle_project_changed(app, Some(next_project_path))?;
 
         let workspace = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(workspace) = inner.workspaces.get_mut(workspace_id) {
+                workspace.project = next_project;
+                workspace.last_active_at = now_millis();
+            }
             set_active_workspace_locked(&mut inner, workspace_id)?
         };
+
+        self.persist_workspace(app, &workspace)?;
+        self.persist_active_workspace_selection(app, Some(workspace_id))?;
+        self.persist_preferences(app)?;
+        self.persist_audit_event(
+            app,
+            Some(&workspace.id),
+            None,
+            None,
+            "workspace-switched",
+            "workspace",
+            &workspace.id,
+            None,
+        );
 
         self.emit_workspace_switched(app, &workspace);
         self.emit_project_state(app);
@@ -201,12 +236,24 @@ impl SentinelManager {
     ) -> Result<(), String> {
         let (session_ids, tab_ids, is_active, next_active_project_path) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let workspace = inner
-                .workspaces
-                .get(workspace_id)
-                .ok_or_else(|| "Workspace not found.".to_string())?;
+            if !inner.workspaces.contains_key(workspace_id) {
+                return Err("Workspace not found.".to_string());
+            }
 
-            if !close_sessions && (!workspace.session_ids.is_empty() || !workspace.tab_ids.is_empty()) {
+            let session_ids = inner
+                .sessions
+                .values()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .map(|record| record.summary.id.clone())
+                .collect::<Vec<_>>();
+            let tab_ids = inner
+                .tabs
+                .values()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .map(|record| record.summary.id.clone())
+                .collect::<Vec<_>>();
+
+            if !close_sessions && (!session_ids.is_empty() || !tab_ids.is_empty()) {
                 return Err(
                     "Workspace still has running sessions or terminals. Close them first or close the workspace with session cleanup enabled."
                         .to_string(),
@@ -226,12 +273,7 @@ impl SentinelManager {
                 None
             };
 
-            (
-                workspace.session_ids.clone(),
-                workspace.tab_ids.clone(),
-                is_active,
-                next_active_project_path,
-            )
+            (session_ids, tab_ids, is_active, next_active_project_path)
         };
 
         if is_active {
@@ -269,6 +311,26 @@ impl SentinelManager {
                 active_workspace_clone(&inner)
             }
         };
+
+        self.delete_workspace_from_database(app, workspace_id)?;
+        if let Some(workspace) = next_active_workspace.as_ref() {
+            self.persist_workspace(app, workspace)?;
+        }
+        self.persist_active_workspace_selection(
+            app,
+            next_active_workspace.as_ref().map(|workspace| workspace.id.as_str()),
+        )?;
+        self.persist_preferences(app)?;
+        self.persist_audit_event(
+            app,
+            Some(workspace_id),
+            None,
+            None,
+            "workspace-removed",
+            "workspace",
+            workspace_id,
+            None,
+        );
 
         emit_event(
             app,
@@ -316,15 +378,28 @@ impl SentinelManager {
         app: &AppHandle,
         workspace_id: &str,
     ) -> Result<(), String> {
-        let (session_ids, tab_ids) = {
+        let active_items = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let workspace = inner
-                .workspaces
-                .get(workspace_id)
-                .ok_or_else(|| "Workspace not found.".to_string())?;
+            if !inner.workspaces.contains_key(workspace_id) {
+                return Err("Workspace not found.".to_string());
+            }
 
-            (workspace.session_ids.clone(), workspace.tab_ids.clone())
+            let session_ids = inner
+                .sessions
+                .values()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .map(|record| record.summary.id.clone())
+                .collect::<Vec<_>>();
+            let tab_ids = inner
+                .tabs
+                .values()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .map(|record| record.summary.id.clone())
+                .collect::<Vec<_>>();
+
+            (session_ids, tab_ids)
         };
+        let (session_ids, tab_ids) = active_items;
 
         for tab_id in &tab_ids {
             let _ = self.close_tab(app, tab_id);

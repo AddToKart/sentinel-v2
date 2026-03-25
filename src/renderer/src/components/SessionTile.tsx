@@ -101,10 +101,12 @@ export function SessionTile({
   fitNonce,
   windowsBuildNumber
 }: SessionTileProps): JSX.Element {
+  const isArchived = session.status === 'closed' || session.status === 'error'
   const terminalHostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const hasWrittenExitRef = useRef(false)
+  const sessionStatusRef = useRef(session.status)
   const viewModeRef = useRef<'terminal' | 'history' | 'review'>('terminal')
   const writeQueueRef = useRef<string[]>([])
   const writeFrameRef = useRef<number | null>(null)
@@ -121,6 +123,10 @@ export function SessionTile({
   const [reviewFile, setReviewFile] = useState<string>(modifiedPaths[0] || '')
   const [originalContent, setOriginalContent] = useState('')
   const [modifiedContent, setModifiedContent] = useState('')
+
+  useEffect(() => {
+    sessionStatusRef.current = session.status
+  }, [session.status])
 
   useEffect(() => {
     viewModeRef.current = viewMode
@@ -303,7 +309,9 @@ export function SessionTile({
       })
 
       const inputDisposable = terminal.onData((data) => {
-        void window.sentinel.sendInput(session.id, data)
+        if (sessionStatusRef.current === 'ready' || sessionStatusRef.current === 'starting') {
+          void window.sentinel.sendInput(session.id, data)
+        }
       })
 
       const observer = new ResizeObserver(() => {
@@ -413,7 +421,10 @@ export function SessionTile({
 
   // Session exit message
   useEffect(() => {
-    if (session.status !== 'closed') { hasWrittenExitRef.current = false; return }
+    if (session.status !== 'closed' && session.status !== 'error') {
+      hasWrittenExitRef.current = false
+      return
+    }
     if (!terminalRef.current || hasWrittenExitRef.current) return
     enqueueOutput(`\r\n\x1b[38;2;255;170;170mSession exited (code ${session.exitCode ?? 0} · ${cleanupLabel(session)})\x1b[0m\r\n`)
     if (session.error) enqueueOutput(`\x1b[38;2;143;165;184m${session.error}\x1b[0m\r\n`)
@@ -514,7 +525,7 @@ export function SessionTile({
     }
   }
 
-  const isClosing = session.status === 'closing' || session.status === 'closed'
+  const isClosing = session.status === 'closing' || isArchived
   const canCommitSession = session.workspaceStrategy === 'git-worktree'
   const commitTitle = 'Commit Worktree Changes'
   const filteredHistory = historyQuery.trim()
@@ -556,7 +567,7 @@ export function SessionTile({
           <button className="px-1 text-white/30 hover:text-white transition" onClick={() => onToggleMaximize(session.id)} title={isMaximized ? 'Restore' : 'Maximize'}>
             {isMaximized ? <Minimize2 className="h-2.5 w-2.5" /> : <Maximize2 className="h-2.5 w-2.5" />}
           </button>
-          <button className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20" disabled={session.status === 'closing'} onClick={() => void onClose(session.id)} title="Close">
+          <button className="px-1 text-white/30 hover:text-rose-300 transition disabled:opacity-20" disabled={session.status === 'closing' || isArchived} onClick={() => void onClose(session.id)} title="Close">
             <X className="h-2.5 w-2.5" />
           </button>
         </div>

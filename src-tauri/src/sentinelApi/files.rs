@@ -18,15 +18,51 @@ impl SentinelManager {
             .unwrap_or_default()
     }
 
-    pub fn write_session_file(&self, session_id: &str, relative_path: &str, content: &str) -> Result<(), String> {
-        let workspace_path = {
+    pub fn write_session_file(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        relative_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let summary = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            let record = inner
+            inner
                 .sessions
                 .get(session_id)
-                .ok_or_else(|| "Session not found.".to_string())?;
-            PathBuf::from(&record.summary.workspace_path)
+                .map(|record| record.summary.clone())
+                .ok_or_else(|| "Session not found.".to_string())?
         };
-        write_workspace_file(&workspace_path, relative_path, content)
+        let workspace_path = PathBuf::from(&summary.workspace_path);
+        let absolute_path = resolve_workspace_target(&workspace_path, relative_path)?;
+        let before_hash = if absolute_path.is_file() {
+            Some(hash_file(&absolute_path)?)
+        } else {
+            None
+        };
+
+        write_workspace_file(&workspace_path, relative_path, content)?;
+
+        let after_hash = if absolute_path.is_file() {
+            Some(hash_file(&absolute_path)?)
+        } else {
+            None
+        };
+        let file_size = absolute_path
+            .metadata()
+            .ok()
+            .map(|metadata| metadata.len() as i64);
+
+        self.persist_file_change(
+            app,
+            session_id,
+            &summary.workspace_id,
+            &normalize_relative_path(relative_path)?,
+            before_hash,
+            after_hash,
+            file_size,
+        );
+
+        Ok(())
     }
 }

@@ -41,11 +41,19 @@ impl SentinelManager {
         };
 
         let next_project = inspect_project(Path::new(project_path))?;
-        {
+        let workspace = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.project = next_project.clone();
             sync_active_project_to_workspace(&mut inner);
             update_workspace_summary(&mut inner);
+            active_workspace_id
+                .as_ref()
+                .and_then(|workspace_id| inner.workspaces.get(workspace_id))
+                .cloned()
+        };
+
+        if let Some(workspace) = workspace.as_ref() {
+            self.persist_workspace(app, workspace)?;
         }
 
         if let Some(active_workspace_id) = active_workspace_id {
@@ -57,8 +65,9 @@ impl SentinelManager {
     }
 
     fn close_ide_terminal(&self, app: &AppHandle) -> Result<(), String> {
-        let (pid, killer) = {
+        let (pid, killer, persisted_state) = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let workspace_id = inner.active_workspace_id.clone();
             let Some(record) = inner.ide.record.as_mut() else {
                 return Ok(());
             };
@@ -71,9 +80,18 @@ impl SentinelManager {
                 }
             }
 
-            (record.state.pid, record.killer.clone())
+            (
+                record.state.pid,
+                record.killer.clone(),
+                workspace_id.map(|workspace_id| (workspace_id, record.state.clone())),
+            )
         };
 
+        if let Some((workspace_id, state)) = persisted_state {
+            if let Err(error) = self.persist_ide_state(app, &workspace_id, &state) {
+                log_persistence_error("persist closing IDE terminal state", &error);
+            }
+        }
         self.emit_ide_state(app);
         let _ = kill_with_killer(&killer);
         let _ = terminate_process_id(pid);

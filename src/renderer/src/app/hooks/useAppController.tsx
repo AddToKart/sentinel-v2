@@ -15,7 +15,7 @@ import {
   type WorkspaceAction
 } from '../support'
 import { getErrorMessage } from '../../error-utils'
-import { clearIdeTerminalOutput, clearSessionOutput } from '../../terminal-stream'
+import { clearIdeTerminalOutput } from '../../terminal-stream'
 import { clearTabOutput } from '../../tab-stream'
 import {
   buildWorkspaceOverlayFiles,
@@ -358,18 +358,6 @@ export function useAppController() {
 
     try {
       await sentinel.closeSession(sessionId)
-      clearSessionOutput(sessionId)
-      setSessions((current) => current.filter((session) => session.id !== sessionId))
-      setSessionHistories((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
-      setSessionDiffs((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
     } catch (error) {
       setErrorMessage(`Failed to close session: ${getErrorMessage(error)}`)
     }

@@ -1,14 +1,16 @@
 use crate::models::{
-    ActivityLogEntry, BootstrapPayload, CleanupState, CreateSessionInput, IdeStatus,
-    IdeTerminalState, ProcessMetrics, ProjectNode, ProjectState, SessionApplyResult,
-    SessionCommandEntry, SessionCommitResult, SessionDiffUpdate, SessionHistoryUpdate,
-    SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
-    SessionWorkspaceStrategy, TabMetricsUpdate, TabOutputEvent, TabStateUpdate, TabStatus,
-    TabSummary, TabType, WorkspaceContext, WorkspacePreferences, WorkspaceRemovedEvent,
+    ActivityLogEntry, AuditLogEntry, BootstrapPayload, CleanupState, CommandHistoryEntry,
+    CreateSessionInput, FileChangeEntry, IdeStatus, IdeTerminalState, ProcessMetrics,
+    ProjectNode, ProjectState, SessionApplyResult, SessionCommandEntry, SessionCommitResult,
+    SessionDiffUpdate, SessionHistoryUpdate, SessionMetricsUpdate, SessionStatus,
+    SessionSummary, SessionSyncConflict, SessionWorkspaceStrategy, SnapshotSummary,
+    TabMetricsUpdate, TabOutputEvent, TabStateUpdate, TabStatus, TabSummary, TabType,
+    WorkspaceAnalytics, WorkspaceContext, WorkspacePreferences, WorkspaceRemovedEvent,
     WorkspaceSummary,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
@@ -20,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const TREE_DEPTH: usize = 3;
 const TREE_ENTRY_LIMIT: usize = 28;
@@ -217,6 +219,8 @@ pub fn parse_windows_build_number() -> Option<u32> {
 }
 
 include!("app.rs");
+include!("persistence.rs");
+include!("sqlite_queries.rs");
 include!("sessions.rs");
 include!("ide.rs");
 include!("files.rs");
