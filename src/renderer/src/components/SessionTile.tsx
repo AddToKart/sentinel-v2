@@ -142,6 +142,7 @@ export function SessionTile({
   const [originalContent, setOriginalContent] = useState('')
   const [modifiedContent, setModifiedContent] = useState('')
   const [terminalEpoch, setTerminalEpoch] = useState(0)
+  const [isFocused, setIsFocused] = useState(false)
 
   useEffect(() => {
     sessionStatusRef.current = session.status
@@ -373,6 +374,11 @@ export function SessionTile({
         }
       })
 
+      const focusHandler = () => setIsFocused(true)
+      const blurHandler = () => setIsFocused(false)
+      terminal.textarea?.addEventListener('focus', focusHandler)
+      terminal.textarea?.addEventListener('blur', blurHandler)
+
       const observer = new ResizeObserver(() => {
         scheduleTerminalFit(140)
       })
@@ -419,6 +425,8 @@ export function SessionTile({
         disposeMaintenance()
         outputCleanup()
         inputDisposable.dispose()
+        terminal.textarea?.removeEventListener('focus', focusHandler)
+        terminal.textarea?.removeEventListener('blur', blurHandler)
         if (writeFrameRef.current !== null) {
           cancelAnimationFrame(writeFrameRef.current)
           writeFrameRef.current = null
@@ -643,7 +651,11 @@ export function SessionTile({
 
   return (
     <article
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#060a0f] rounded-none border border-white/10"
+      className={`flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#060a0f] transition-all duration-200 ${
+        isFocused 
+          ? 'ring-1 ring-sentinel-accent/50 border-sentinel-accent/50 shadow-[0_0_20px_rgba(70,214,182,0.15)] z-20' 
+          : 'border-white/10 z-10'
+      }`}
       onMouseDown={() => { if (viewMode === 'terminal') scheduleTerminalFocus() }}
     >
       {/* ── Permanent utility strip (20px) ─────────────────────── */}

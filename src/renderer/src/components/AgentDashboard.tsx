@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { GripHorizontal, GripVertical, LayoutGrid, Sidebar as SidebarIcon } from 'lucide-react'
+import { GripHorizontal, GripVertical } from 'lucide-react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 
 import type { SessionCommandEntry, SessionSummary } from '@shared/types'
