@@ -29,42 +29,54 @@ export function IdeTerminalGroup({
   onCloseTerminal,
   onToggleCollapse
 }: IdeTerminalGroupProps): JSX.Element {
-  // Ensure the active tab actually exists, otherwise fallback to ide-workspace
   const isValidTab = activeTerminalId === 'ide-workspace' || tabs.some(t => t.id === activeTerminalId)
   const displayId = isValidTab ? activeTerminalId : 'ide-workspace'
-  const activeTab = displayId === 'ide-workspace'
-    ? null
-    : tabs.find((tab) => tab.id === displayId) ?? null
   const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="flex h-full w-full bg-[#0d1117] overflow-hidden">
-      {/* Left: Active Terminal Content */}
+      {/* Left: Active Terminal Content — ALL terminals stay mounted to preserve the xterm
+          WebGL canvas. Only visibility is toggled to prevent canvas destroy/recreate
+          on tab switch, which caused display corruption. */}
       <div className="flex-1 min-w-0 h-full relative border-r border-white/10">
-        {displayId === 'ide-workspace' ? (
-          <div className="absolute inset-0 z-10">
-            <IdeTerminalPanel
-              fitNonce={fitNonce}
-              projectPath={projectPath}
-              terminalState={ideTerminalState}
-              windowsBuildNumber={windowsBuildNumber}
-              onClose={onToggleCollapse}
-              actionsTarget={actionsTarget}
-              isVisible
-            />
-          </div>
-        ) : activeTab ? (
-          <div className="absolute inset-0 z-10">
+        {/* IDE Workspace terminal — always mounted */}
+        <div
+          className="absolute inset-0"
+          style={{ zIndex: displayId === 'ide-workspace' ? 10 : 0, visibility: displayId === 'ide-workspace' ? 'visible' : 'hidden', pointerEvents: displayId === 'ide-workspace' ? 'auto' : 'none' }}
+          aria-hidden={displayId !== 'ide-workspace'}
+        >
+          <IdeTerminalPanel
+            fitNonce={fitNonce}
+            projectPath={projectPath}
+            terminalState={ideTerminalState}
+            windowsBuildNumber={windowsBuildNumber}
+            onClose={onToggleCollapse}
+            actionsTarget={actionsTarget}
+            isVisible={displayId === 'ide-workspace'}
+          />
+        </div>
+
+        {/* Standalone tab terminals — all tabs stay mounted */}
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            className="absolute inset-0"
+            style={{
+              zIndex: displayId === tab.id ? 10 : 0,
+              visibility: displayId === tab.id ? 'visible' : 'hidden',
+              pointerEvents: displayId === tab.id ? 'auto' : 'none'
+            }}
+            aria-hidden={displayId !== tab.id}
+          >
             <StandaloneTerminalTile
-              key={activeTab.id}
-              tab={activeTab}
+              tab={tab}
               fitNonce={fitNonce}
               windowsBuildNumber={windowsBuildNumber}
-              onClose={() => onCloseTerminal(activeTab.id, {} as any)}
+              onClose={() => onCloseTerminal(tab.id, {} as any)}
               hideMaximize={true}
             />
           </div>
-        ) : null}
+        ))}
       </div>
 
       {/* Right: Vertical Tab Sidebar (VS Code style) */}

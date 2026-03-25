@@ -126,6 +126,7 @@ export function SessionTile({
   const writeQueueRef = useRef<string[]>([])
   const writeFrameRef = useRef<number | null>(null)
   const writeInFlightRef = useRef(false)
+  const isDisposedRef = useRef(false)
   const fitFrameRef = useRef<number | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const focusFrameRef = useRef<number | null>(null)
@@ -158,6 +159,11 @@ export function SessionTile({
     writeFrameRef.current = requestAnimationFrame(() => {
       writeFrameRef.current = null
 
+      if (isDisposedRef.current) {
+        writeQueueRef.current = []
+        return
+      }
+
       const terminal = terminalRef.current
       if (!terminal || writeInFlightRef.current || writeQueueRef.current.length === 0) {
         return
@@ -169,7 +175,7 @@ export function SessionTile({
 
       terminal.write(chunk, () => {
         writeInFlightRef.current = false
-        if (writeQueueRef.current.length > 0) {
+        if (!isDisposedRef.current && writeQueueRef.current.length > 0) {
           scheduleWriteFlush()
         }
       })
@@ -336,6 +342,7 @@ export function SessionTile({
 
     let cancelled = false
     let disposeTerminal = () => {}
+    isDisposedRef.current = false
     const supportsIdleCallback = typeof (window as any).requestIdleCallback === 'function'
 
     const initializeTerminal = () => {
@@ -404,6 +411,10 @@ export function SessionTile({
       })
 
       disposeTerminal = () => {
+        // Set disposal flag FIRST to stop any incoming write callbacks
+        isDisposedRef.current = true
+        terminalRef.current = null
+
         observer.disconnect()
         disposeMaintenance()
         outputCleanup()
@@ -431,8 +442,7 @@ export function SessionTile({
         writeQueueRef.current = []
         writeInFlightRef.current = false
         lastGeometryRef.current = { width: 0, height: 0, cols: 0, rows: 0 }
-        terminal.dispose()
-        terminalRef.current = null
+        try { terminal.dispose() } catch { /* ignore */ }
         fitAddonRef.current = null
       }
     }

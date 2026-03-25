@@ -131,12 +131,21 @@ export function StandaloneTerminalTile({
     terminal.loadAddon(fitAddon)
     terminal.open(terminalHostRef.current)
 
-    // Configure terminal DOM
+    // Configure terminal DOM — move the hidden textarea completely off-screen
+    // (matching SessionTile / useIdeTerminalRuntime) so it doesn't affect layout.
     const textarea = terminal.textarea
     if (textarea) {
-      textarea.setAttribute('aria-label', `Terminal ${tab.label}`)
-      textarea.setAttribute('spellcheck', 'false')
-      textarea.style.position = 'absolute'
+      textarea.spellcheck = false
+      textarea.autocapitalize = 'off'
+      textarea.autocomplete = 'off'
+      textarea.setAttribute('autocorrect', 'off')
+      textarea.setAttribute('aria-hidden', 'true')
+      textarea.style.pointerEvents = 'none'
+      textarea.style.position = 'fixed'
+      textarea.style.left = '-99999px'
+      textarea.style.top = '0'
+      textarea.style.width = '1px'
+      textarea.style.height = '1px'
       textarea.style.opacity = '0'
     }
 
