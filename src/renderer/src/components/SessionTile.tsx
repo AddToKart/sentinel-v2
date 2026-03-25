@@ -36,7 +36,7 @@ import {
   installTerminalMaintenance,
   refreshTerminalSurface
 } from '../terminal-config'
-import { subscribeToSessionOutput } from '../terminal-stream'
+import { attachSessionOutput } from '../terminal-stream'
 
 interface SessionTileProps {
   session: SessionSummary
@@ -54,6 +54,8 @@ interface SessionTileProps {
   fitNonce: number
   windowsBuildNumber?: number
 }
+
+const sessionTerminalGeometryCache = new Map<string, { cols: number; rows: number }>()
 
 function statusColor(status: SessionSummary['status']): string {
   if (status === 'ready') return 'bg-emerald-400'
@@ -214,13 +216,17 @@ export function SessionTile({
     const lastGeometry = lastGeometryRef.current
     const hostChanged = lastGeometry.width !== width || lastGeometry.height !== height
     const cellGeometryChanged = lastGeometry.cols !== cols || lastGeometry.rows !== rows
+    const cachedGeometry = sessionTerminalGeometryCache.get(session.id)
+    const backendGeometryChanged =
+      cachedGeometry?.cols !== cols || cachedGeometry?.rows !== rows
 
     if (!hostChanged && !cellGeometryChanged) {
       return
     }
 
     lastGeometryRef.current = { width, height, cols, rows }
-    if (cellGeometryChanged) {
+    sessionTerminalGeometryCache.set(session.id, { cols, rows })
+    if (cellGeometryChanged && backendGeometryChanged) {
       void window.sentinel.resizeSession(session.id, cols, rows)
     }
   }
@@ -344,7 +350,13 @@ export function SessionTile({
       terminal.open(terminalHostRef.current)
       configureTerminalDom(terminal)
 
-      const outputCleanup = subscribeToSessionOutput(session.id, (data) => {
+      let primed = false
+      const pendingOutput: string[] = []
+      const { replayData, unsubscribe: outputCleanup } = attachSessionOutput(session.id, (data) => {
+        if (!primed) {
+          pendingOutput.push(data)
+          return
+        }
         enqueueOutput(data)
       })
 
@@ -364,13 +376,32 @@ export function SessionTile({
         () => viewModeRef.current === 'terminal'
       )
 
-      requestAnimationFrame(() => {
-        scheduleTerminalFit(0)
-        scheduleTerminalFocus()
-      })
-
       terminalRef.current = terminal
       fitAddonRef.current = fitAddon
+
+      const flushBufferedOutput = () => {
+        const chunks: string[] = []
+        if (replayData) {
+          chunks.push(replayData)
+        }
+        if (pendingOutput.length > 0) {
+          chunks.push(pendingOutput.join(''))
+          pendingOutput.length = 0
+        }
+        primed = true
+        if (chunks.length > 0) {
+          enqueueOutput(chunks.join(''))
+        }
+      }
+
+      performTerminalFit()
+
+      requestAnimationFrame(() => {
+        performTerminalFit()
+        flushBufferedOutput()
+        scheduleTerminalFit(80)
+        scheduleTerminalFocus()
+      })
 
       disposeTerminal = () => {
         observer.disconnect()
@@ -450,7 +481,6 @@ export function SessionTile({
     requestAnimationFrame(() => {
       if (terminalRef.current) refreshTerminalSurface(terminalRef.current)
     })
-    requestTerminalRebuild(220)
   }, [session.id, fitNonce, viewMode])
 
   useEffect(() => {

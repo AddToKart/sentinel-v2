@@ -9,6 +9,7 @@ interface OutputBuffer {
 
 interface OutputStore {
   clear: (key: string) => void
+  connect: (key: string, listener: OutputListener) => { replayData: string; unsubscribe: () => void }
   push: (key: string, data: string) => void
   subscribe: (key: string, listener: OutputListener, replay?: boolean) => () => void
 }
@@ -55,6 +56,31 @@ function createOutputStore(): OutputStore {
     clear(key: string) {
       buffers.delete(key)
       listeners.delete(key)
+    },
+    connect(key: string, listener: OutputListener) {
+      let scopedListeners = listeners.get(key)
+      if (!scopedListeners) {
+        scopedListeners = new Set()
+        listeners.set(key, scopedListeners)
+      }
+
+      scopedListeners.add(listener)
+      const replayData = buffers.get(key)?.chunks.join('') ?? ''
+
+      return {
+        replayData,
+        unsubscribe: () => {
+          const currentListeners = listeners.get(key)
+          if (!currentListeners) {
+            return
+          }
+
+          currentListeners.delete(listener)
+          if (currentListeners.size === 0) {
+            listeners.delete(key)
+          }
+        }
+      }
     },
     push(key: string, data: string) {
       const buffer = getBuffer(key)
@@ -145,6 +171,14 @@ export function subscribeToSessionOutput(
   return state.store.subscribe(sessionId, listener, options.replay ?? true)
 }
 
+export function attachSessionOutput(
+  sessionId: string,
+  listener: OutputListener
+): { replayData: string; unsubscribe: () => void } {
+  ensureSessionBridge()
+  return state.store.connect(sessionId, listener)
+}
+
 export function clearSessionOutput(sessionId: string): void {
   state.store.clear(sessionId)
 }
@@ -155,6 +189,13 @@ export function subscribeToIdeTerminalOutput(
 ): () => void {
   ensureIdeBridge()
   return state.store.subscribe(IDE_TERMINAL_KEY, listener, options.replay ?? true)
+}
+
+export function attachIdeTerminalOutput(
+  listener: OutputListener
+): { replayData: string; unsubscribe: () => void } {
+  ensureIdeBridge()
+  return state.store.connect(IDE_TERMINAL_KEY, listener)
 }
 
 export function clearIdeTerminalOutput(): void {

@@ -7,7 +7,7 @@ import {
   createTerminalOptions,
   refreshTerminalSurface,
 } from '../terminal-config'
-import { subscribeToTabOutput } from '../tab-stream'
+import { attachTabOutput } from '../tab-stream'
 
 import type { TabSummary } from '@shared/types'
 
@@ -19,6 +19,8 @@ interface StandaloneTerminalTileProps {
   onFocus?: () => void
   hideMaximize?: boolean
 }
+
+const tabTerminalGeometryCache = new Map<string, { cols: number; rows: number }>()
 
 export function StandaloneTerminalTile({
   tab,
@@ -36,9 +38,7 @@ export function StandaloneTerminalTile({
   const writeInFlightRef = useRef(false)
   const isDisposedRef = useRef(false)
   const rebuildTimerRef = useRef<number | null>(null)
-  const lastRebuildAtRef = useRef(0)
   const [isMaximized, setIsMaximized] = useState(false)
-  const [terminalEpoch, setTerminalEpoch] = useState(0)
 
   // Process write queue — batch all pending chunks into a single write to avoid
   // per-chunk callback recursion, which can fire after disposal and crash xterm.
@@ -87,7 +87,11 @@ export function StandaloneTerminalTile({
       fitAddon.fit()
       const dims = fitAddon.proposeDimensions()
       if (dims && dims.cols > 0 && dims.rows > 0) {
-        if (terminal.cols !== dims.cols || terminal.rows !== dims.rows) {
+        const cachedGeometry = tabTerminalGeometryCache.get(tab.id)
+        const backendGeometryChanged =
+          cachedGeometry?.cols !== dims.cols || cachedGeometry?.rows !== dims.rows
+        tabTerminalGeometryCache.set(tab.id, { cols: dims.cols, rows: dims.rows })
+        if (backendGeometryChanged) {
           window.sentinel.resizeTab(tab.id, dims.cols, dims.rows)
         }
       }
@@ -107,28 +111,10 @@ export function StandaloneTerminalTile({
     }, 0)
   }
 
-  const requestTerminalRebuild = (delay = 180) => {
-    if (isDisposedRef.current) return
-
-    const now = Date.now()
-    if (now - lastRebuildAtRef.current < 1500) return
-
-    if (rebuildTimerRef.current !== null) {
-      window.clearTimeout(rebuildTimerRef.current)
-    }
-
-    rebuildTimerRef.current = window.setTimeout(() => {
-      rebuildTimerRef.current = null
-      lastRebuildAtRef.current = Date.now()
-      setTerminalEpoch((value) => value + 1)
-    }, delay)
-  }
-
   // Handle resize
   useEffect(() => {
     fitTerminal()
     focusTerminal()
-    requestTerminalRebuild(220)
   }, [fitNonce])
 
   // Initialize terminal
@@ -155,8 +141,14 @@ export function StandaloneTerminalTile({
     }
 
     // Subscribe to output
-    const unsubscribe = subscribeToTabOutput(tab.id, (data: string) => {
+    let primed = false
+    const pendingOutput: string[] = []
+    const { replayData, unsubscribe } = attachTabOutput(tab.id, (data: string) => {
       if (isDisposedRef.current) return
+      if (!primed) {
+        pendingOutput.push(data)
+        return
+      }
       writeQueueRef.current.push(data)
       scheduleWriteFlush()
     })
@@ -168,12 +160,30 @@ export function StandaloneTerminalTile({
     })
 
     terminalRef.current = terminal
+    fitTerminal()
+
+    const flushBufferedOutput = () => {
+      const chunks: string[] = []
+      if (replayData) {
+        chunks.push(replayData)
+      }
+      if (pendingOutput.length > 0) {
+        chunks.push(pendingOutput.join(''))
+        pendingOutput.length = 0
+      }
+      primed = true
+      if (chunks.length > 0) {
+        writeQueueRef.current.push(chunks.join(''))
+        scheduleWriteFlush()
+      }
+    }
 
     // Initial fit
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       fitTerminal()
+      flushBufferedOutput()
       focusTerminal()
-    }, 50)
+    })
 
     return () => {
       // Set disposal flag FIRST to stop any incoming data
@@ -216,7 +226,7 @@ export function StandaloneTerminalTile({
         // Ignore errors during disposal
       }
     }
-  }, [tab.id, terminalEpoch])
+  }, [tab.id])
 
   const handleWheel = (event: React.WheelEvent) => {
     if (isDisposedRef.current) return

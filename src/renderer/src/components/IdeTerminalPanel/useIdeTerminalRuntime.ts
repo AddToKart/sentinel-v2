@@ -12,7 +12,7 @@ import {
   installTerminalMaintenance,
   refreshTerminalSurface
 } from '../../terminal-config'
-import { clearIdeTerminalOutput, subscribeToIdeTerminalOutput } from '../../terminal-stream'
+import { attachIdeTerminalOutput, clearIdeTerminalOutput } from '../../terminal-stream'
 import { createIdleState, describeState } from './helpers'
 
 interface UseIdeTerminalRuntimeOptions {
@@ -22,6 +22,9 @@ interface UseIdeTerminalRuntimeOptions {
   windowsBuildNumber?: number
   isVisible: boolean
 }
+
+const IDE_TERMINAL_GEOMETRY_CACHE_KEY = 'ide-terminal'
+const ideTerminalGeometryCache = new Map<string, { cols: number; rows: number }>()
 
 export function useIdeTerminalRuntime({
   fitNonce,
@@ -41,7 +44,6 @@ export function useIdeTerminalRuntime({
   const focusFrameRef = useRef<number | null>(null)
   const rebuildTimerRef = useRef<number | null>(null)
   const recoveryTimerRef = useRef<number | null>(null)
-  const lastRebuildAtRef = useRef(0)
   const lastGeometryRef = useRef({ width: 0, height: 0, cols: 0, rows: 0 })
   const lastProjectPathRef = useRef<string | undefined>(projectPath)
   const hasWrittenExitRef = useRef(false)
@@ -50,7 +52,6 @@ export function useIdeTerminalRuntime({
   const [terminalState, setTerminalState] = useState<IdeTerminalState>(() => externalState)
   const [connecting, setConnecting] = useState(false)
   const [operationLoading, setOperationLoading] = useState<'apply' | 'discard' | null>(null)
-  const [terminalEpoch, setTerminalEpoch] = useState(0)
 
   function scheduleWriteFlush(): void {
     if (writeFrameRef.current !== null) {
@@ -114,13 +115,17 @@ export function useIdeTerminalRuntime({
     const lastGeometry = lastGeometryRef.current
     const hostChanged = lastGeometry.width !== width || lastGeometry.height !== height
     const cellGeometryChanged = lastGeometry.cols !== cols || lastGeometry.rows !== rows
+    const cachedGeometry = ideTerminalGeometryCache.get(IDE_TERMINAL_GEOMETRY_CACHE_KEY)
+    const backendGeometryChanged =
+      cachedGeometry?.cols !== cols || cachedGeometry?.rows !== rows
 
     if (!hostChanged && !cellGeometryChanged) {
       return
     }
 
     lastGeometryRef.current = { width, height, cols, rows }
-    if (cellGeometryChanged) {
+    ideTerminalGeometryCache.set(IDE_TERMINAL_GEOMETRY_CACHE_KEY, { cols, rows })
+    if (cellGeometryChanged && backendGeometryChanged) {
       void window.sentinel.resizeIdeTerminal(cols, rows)
     }
   }
@@ -196,27 +201,6 @@ export function useIdeTerminalRuntime({
     })
   }
 
-  function requestTerminalRebuild(delay = 180): void {
-    if (!isVisible) {
-      return
-    }
-
-    const now = Date.now()
-    if (now - lastRebuildAtRef.current < 1500) {
-      return
-    }
-
-    if (rebuildTimerRef.current !== null) {
-      window.clearTimeout(rebuildTimerRef.current)
-    }
-
-    rebuildTimerRef.current = window.setTimeout(() => {
-      rebuildTimerRef.current = null
-      lastRebuildAtRef.current = Date.now()
-      setTerminalEpoch((value) => value + 1)
-    }, delay)
-  }
-
   async function ensureTerminal(resetOutput = false): Promise<void> {
     if (!projectPath) {
       setTerminalState(createIdleState())
@@ -254,7 +238,13 @@ export function useIdeTerminalRuntime({
     terminal.open(terminalHostRef.current)
     configureTerminalDom(terminal)
 
-    const outputCleanup = subscribeToIdeTerminalOutput((data) => {
+    let primed = false
+    const pendingOutput: string[] = []
+    const { replayData, unsubscribe: outputCleanup } = attachIdeTerminalOutput((data) => {
+      if (!primed) {
+        pendingOutput.push(data)
+        return
+      }
       enqueueOutput(data)
     })
 
@@ -271,6 +261,29 @@ export function useIdeTerminalRuntime({
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    const flushBufferedOutput = () => {
+      const chunks: string[] = []
+      if (replayData) {
+        chunks.push(replayData)
+      }
+      if (pendingOutput.length > 0) {
+        chunks.push(pendingOutput.join(''))
+        pendingOutput.length = 0
+      }
+      primed = true
+      if (chunks.length > 0) {
+        enqueueOutput(chunks.join(''))
+      }
+    }
+
+    performTerminalFit()
+    requestAnimationFrame(() => {
+      performTerminalFit()
+      flushBufferedOutput()
+      scheduleTerminalFit(80)
+      focusTerminal()
+    })
 
     return () => {
       observer.disconnect()
@@ -305,7 +318,7 @@ export function useIdeTerminalRuntime({
       fitAddonRef.current = null
       hasInitializedRef.current = false
     }
-  }, [terminalEpoch, windowsBuildNumber])
+  }, [windowsBuildNumber])
 
   useEffect(() => {
     if (!isVisible || hasInitializedRef.current) {
@@ -344,7 +357,6 @@ export function useIdeTerminalRuntime({
         refreshTerminalSurface(terminalRef.current)
       }
     })
-    requestTerminalRebuild(220)
   }, [fitNonce, isVisible])
 
   useEffect(() => {
@@ -414,7 +426,7 @@ export function useIdeTerminalRuntime({
 
   async function recoverOrReconnect(): Promise<void> {
     if (terminalState.status === 'ready') {
-      requestTerminalRebuild(0)
+      healTerminalDisplay()
       return
     }
 
