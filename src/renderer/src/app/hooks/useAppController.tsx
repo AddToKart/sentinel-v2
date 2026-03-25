@@ -62,6 +62,7 @@ export function useAppController() {
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [ideTabIds, setIdeTabIds] = useState<string[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
+  const [layoutMode, setLayoutMode] = useState<'grid' | 'master-stack'>('master-stack')
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
   const [statusBarCollapsed, setStatusBarCollapsed] = useState(false)
@@ -597,6 +598,8 @@ export function useAppController() {
       sessionDiffs={sessionDiffs}
       sessions={visibleSessions}
       windowsBuildNumber={windowsBuildNumber}
+      layoutMode={layoutMode}
+      onSetLayoutMode={setLayoutMode}
     />
   )
 
@@ -666,7 +669,9 @@ export function useAppController() {
       tabCountsByWorkspace,
       unreadNotificationCount: unreadCount,
       unreadNotificationCountsByWorkspace: unreadCountsByWorkspace,
-      workspaces
+      workspaces,
+      layoutMode,
+      onSetLayoutMode: setLayoutMode
     },
     workspacePanelsProps: {
       activeStandaloneTab,

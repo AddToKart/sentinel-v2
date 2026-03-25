@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { GitBranch, PanelLeft, Plus, TerminalSquare } from 'lucide-react'
+import { GitBranch, LayoutGrid, PanelLeft, Plus, Sidebar as SidebarIcon, TerminalSquare } from 'lucide-react'
 
 import type { ProjectState, WorkspaceContext } from '@shared/types'
 
@@ -32,6 +32,8 @@ interface AppHeaderProps {
   onSwitchWorkspace: (workspaceId: string) => void
   onToggleSidebar: () => void
   onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => void
+  layoutMode: 'grid' | 'master-stack'
+  onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
 }
 
 export function AppHeader({
@@ -57,7 +59,9 @@ export function AppHeader({
   onOpenProject,
   onSwitchWorkspace,
   onToggleSidebar,
-  onWorkspaceAction
+  onWorkspaceAction,
+  layoutMode,
+  onSetLayoutMode
 }: AppHeaderProps): JSX.Element {
   return (
     <header
@@ -140,6 +144,30 @@ export function AppHeader({
         className="ml-auto flex shrink-0 items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
       >
+        {activeWorkspaceId && (sessionCountsByWorkspace[activeWorkspaceId] ?? 0) >= 3 && (
+          <div className="mr-2 flex items-center gap-0.5 rounded-md border border-white/10 bg-black/40 p-0.5 shadow-sm">
+            <button
+              className={`rounded px-2 py-0.5 text-[10px] transition flex items-center gap-1.5 ${
+                layoutMode === 'grid' ? 'bg-sentinel-accent/15 text-sentinel-accent' : 'text-sentinel-mist hover:text-white hover:bg-white/5'
+              }`}
+              onClick={() => onSetLayoutMode('grid')}
+              title="Grid Layout"
+              type="button"
+            >
+              <LayoutGrid className="h-3 w-3" />
+            </button>
+            <button
+              className={`rounded px-2 py-0.5 text-[10px] transition flex items-center gap-1.5 ${
+                layoutMode === 'master-stack' ? 'bg-sentinel-accent/15 text-sentinel-accent' : 'text-sentinel-mist hover:text-white hover:bg-white/5'
+              }`}
+              onClick={() => onSetLayoutMode('master-stack')}
+              title="Master-Stack Layout"
+              type="button"
+            >
+              <SidebarIcon className="h-3 w-3" />
+            </button>
+          </div>
+        )}
         <WorkspaceNotifications
           bellRinging={bellRinging}
           notifications={notifications}

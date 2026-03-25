@@ -19,6 +19,8 @@ interface MultiplexWorkspaceViewProps {
   onPauseSession: (sessionId: string) => Promise<void>
   onResumeSession: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
+  layoutMode: 'grid' | 'master-stack'
+  onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
 }
 
 export function MultiplexWorkspaceView({
@@ -34,7 +36,9 @@ export function MultiplexWorkspaceView({
   onOpenProject,
   onPauseSession,
   onResumeSession,
-  onToggleMaximize
+  onToggleMaximize,
+  layoutMode,
+  onSetLayoutMode
 }: MultiplexWorkspaceViewProps): JSX.Element {
   if (!hasProject) {
     return (
@@ -79,6 +83,8 @@ export function MultiplexWorkspaceView({
         sessionDiffs={sessionDiffs}
         sessions={sessions}
         windowsBuildNumber={windowsBuildNumber}
+        layoutMode={layoutMode}
+        onSetLayoutMode={onSetLayoutMode}
       />
     </Suspense>
   )
