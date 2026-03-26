@@ -34,6 +34,7 @@ import type {
   SessionWorkspaceStrategy,
   TabSummary,
   WorkspaceContext,
+  WorkspaceMode,
   WorkspaceSummary
 } from '@shared/types'
 
@@ -67,6 +68,7 @@ export function useAppController() {
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
   const [statusBarCollapsed, setStatusBarCollapsed] = useState(false)
   const [bootstrapComplete, setBootstrapComplete] = useState(false)
+  const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | null>(null)
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
   const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
@@ -141,6 +143,23 @@ export function useAppController() {
     }
 
     return sentinel
+  }
+
+  function dropSessionLocally(sessionId: string): void {
+    setSessions((current) => current.filter((session) => session.id !== sessionId))
+    setSessionHistories((current) => {
+      const next = { ...current }
+      delete next[sessionId]
+      return next
+    })
+    setSessionDiffs((current) => {
+      const next = { ...current }
+      delete next[sessionId]
+      return next
+    })
+    if (maximizedSessionId === sessionId) {
+      setMaximizedSessionId(null)
+    }
   }
 
   useEffect(() => {
@@ -310,18 +329,37 @@ export function useAppController() {
     }
 
     try {
-      const previousProjectPath = project.path
-      const nextProject = await sentinel.selectProject()
-      if (nextProject.path !== previousProjectPath) {
-        clearIdeTerminalOutput()
+      const selectedPath = await sentinel.pickProjectDirectory()
+      if (!selectedPath) {
+        return
       }
-      setProject(nextProject)
-      setSelectedFile(null)
+
+      setPendingWorkspacePath(selectedPath)
     } catch (error) {
       const message = getErrorMessage(error)
       if (message !== 'Dialog cancelled') {
         setErrorMessage(`Failed to open project: ${message}`)
       }
+    }
+  }
+
+  async function handleConfirmWorkspaceMode(mode: WorkspaceMode): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel || !pendingWorkspacePath) {
+      return
+    }
+
+    try {
+      const previousProjectPath = project.path
+      const workspace = await sentinel.createWorkspace(pendingWorkspacePath, undefined, mode)
+      if (workspace.project.path !== previousProjectPath) {
+        clearIdeTerminalOutput()
+      }
+      setProject(workspace.project)
+      setSelectedFile(null)
+      setPendingWorkspacePath(null)
+    } catch (error) {
+      setErrorMessage(`Failed to create workspace: ${getErrorMessage(error)}`)
     }
   }
 
@@ -416,7 +454,12 @@ export function useAppController() {
     try {
       await sentinel.closeSession(sessionId)
     } catch (error) {
-      setErrorMessage(`Failed to stop session: ${getErrorMessage(error)}`)
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to stop session: ${message}`)
     }
   }
 
@@ -429,7 +472,12 @@ export function useAppController() {
     try {
       await sentinel.pauseSession(sessionId)
     } catch (error) {
-      setErrorMessage(`Failed to pause session: ${getErrorMessage(error)}`)
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to pause session: ${message}`)
     }
   }
 
@@ -442,7 +490,12 @@ export function useAppController() {
     try {
       await sentinel.resumeSession(sessionId)
     } catch (error) {
-      setErrorMessage(`Failed to resume session: ${getErrorMessage(error)}`)
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to resume session: ${message}`)
     }
   }
 
@@ -454,22 +507,14 @@ export function useAppController() {
 
     try {
       await sentinel.deleteSession(sessionId)
-      setSessions((current) => current.filter((session) => session.id !== sessionId))
-      setSessionHistories((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
-      setSessionDiffs((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
-      if (maximizedSessionId === sessionId) {
-        setMaximizedSessionId(null)
-      }
+      dropSessionLocally(sessionId)
     } catch (error) {
-      setErrorMessage(`Failed to delete session: ${getErrorMessage(error)}`)
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to delete session: ${message}`)
     }
   }
 
@@ -713,8 +758,15 @@ export function useAppController() {
       windowsBuildNumber
     },
     clearErrorMessage: () => setErrorMessage(null),
+    workspaceModeDialogProps: {
+      candidatePath: pendingWorkspacePath,
+      open: pendingWorkspacePath !== null,
+      onClose: () => setPendingWorkspacePath(null),
+      onConfirm: (mode: WorkspaceMode) => { void handleConfirmWorkspaceMode(mode) }
+    },
     closeGlobalActionBar: () => setGlobalActionBarOpen(false),
     toggleConsole,
     toggleGlobalActionBar
   }
 }
+

@@ -1,6 +1,6 @@
 impl SentinelManager {
     pub fn create_session(self: &Arc<Self>, app: &AppHandle, input: CreateSessionInput) -> Result<SessionSummary, String> {
-        let (workspace_id, project, session_count, default_workspace_strategy) = {
+        let (workspace_id, project, session_count, default_workspace_strategy, workspace_mode) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let workspace = active_workspace_clone(&inner)
                 .ok_or_else(|| "Open a project workspace before starting an agent session.".to_string())?;
@@ -9,6 +9,7 @@ impl SentinelManager {
                 workspace.project,
                 workspace.session_ids.len(),
                 workspace.default_session_strategy,
+                workspace.mode,
             )
         };
 
@@ -81,6 +82,7 @@ impl SentinelManager {
             exit_code: None,
             error: None,
             metrics: ProcessMetrics::default(),
+            mode: workspace_mode,
         };
 
         let mut record = SessionRecord {
@@ -232,7 +234,7 @@ impl SentinelManager {
         let row = tauri::async_runtime::block_on(SessionRepository::find_by_id(&pool, session_id))
             .map_err(|error| format!("Failed to load session {session_id}: {error}"))?
             .ok_or_else(|| "Session not found.".to_string())?;
-        let mut summary = session_summary_from_row(row);
+        let mut summary = session_summary_from_row(row, WorkspaceMode::Local);
 
         if summary.status != SessionStatus::Paused {
             return Err("Only paused sessions can be resumed.".to_string());
@@ -380,7 +382,7 @@ impl SentinelManager {
         let row = tauri::async_runtime::block_on(SessionRepository::find_by_id(&pool, session_id))
             .map_err(|error| format!("Failed to load session {session_id}: {error}"))?
             .ok_or_else(|| "Session not found.".to_string())?;
-        let mut summary = session_summary_from_row(row);
+        let mut summary = session_summary_from_row(row, WorkspaceMode::Local);
 
         if summary.cleanup_state != CleanupState::Removed {
             summary.error = None;
@@ -532,7 +534,7 @@ impl SentinelManager {
         let row = tauri::async_runtime::block_on(SessionRepository::find_by_id(&pool, session_id))
             .map_err(|error| format!("Failed to load session {session_id}: {error}"))?
             .ok_or_else(|| "Session not found.".to_string())?;
-        let mut summary = session_summary_from_row(row);
+        let mut summary = session_summary_from_row(row, WorkspaceMode::Local);
 
         match shutdown_mode {
             SessionShutdownMode::Pause => {

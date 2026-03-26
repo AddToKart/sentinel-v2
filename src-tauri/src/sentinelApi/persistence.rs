@@ -28,6 +28,17 @@ fn session_strategy_from_db(value: &str) -> SessionWorkspaceStrategy {
     }
 }
 
+fn workspace_mode_from_metadata(metadata: Option<&str>) -> WorkspaceMode {
+    metadata
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| value.get("mode").and_then(|mode| mode.as_str()).map(str::to_string))
+        .map(|value| match value.as_str() {
+            "cloud" => WorkspaceMode::Cloud,
+            _ => WorkspaceMode::Local,
+        })
+        .unwrap_or(WorkspaceMode::Local)
+}
+
 fn workspace_project_from_row(row: &WorkspaceRow, refresh_tree: bool) -> ProjectState {
     if refresh_tree {
         if let Some(project_path) = row.project_path.as_deref() {
@@ -50,6 +61,7 @@ fn workspace_project_from_row(row: &WorkspaceRow, refresh_tree: bool) -> Project
 }
 
 fn workspace_from_row(row: WorkspaceRow, refresh_tree: bool) -> WorkspaceContext {
+    let mode = workspace_mode_from_metadata(row.metadata.as_deref());
     let project = workspace_project_from_row(&row, refresh_tree);
     WorkspaceContext {
         id: row.id.clone(),
@@ -60,6 +72,7 @@ fn workspace_from_row(row: WorkspaceRow, refresh_tree: bool) -> WorkspaceContext
         created_at: row.created_at,
         last_active_at: row.last_active_at,
         default_session_strategy: session_strategy_from_db(&row.default_session_strategy),
+        mode,
     }
 }
 
@@ -117,7 +130,7 @@ fn ide_status_from_db(value: &str) -> IdeStatus {
     }
 }
 
-fn session_summary_from_row(row: SessionRow) -> SessionSummary {
+fn session_summary_from_row(row: SessionRow, mode: WorkspaceMode) -> SessionSummary {
     SessionSummary {
         id: row.id,
         workspace_id: row.workspace_id,
@@ -142,6 +155,7 @@ fn session_summary_from_row(row: SessionRow) -> SessionSummary {
             handle_count: row.handle_count.max(0) as u32,
             process_count: row.process_count.max(0) as u32,
         },
+        mode,
     }
 }
 
@@ -267,6 +281,11 @@ fn preferences_from_rows(
                 } else {
                     Some(row.value.clone())
                 };
+            }
+            "cloud_token" => {
+                if !row.value.trim().is_empty() {
+                    preferences.cloud_token = Some(row.value.clone());
+                }
             }
             _ => {}
         }
@@ -440,6 +459,15 @@ impl SentinelManager {
                 "workspace",
                 "last_workspace_id",
                 &last_workspace_id,
+                false,
+                now_millis(),
+            )
+            .await?;
+            PreferenceRepository::upsert_global(
+                &pool,
+                "workspace",
+                "cloud_token",
+                preferences.cloud_token.as_deref().unwrap_or_default(),
                 false,
                 now_millis(),
             )

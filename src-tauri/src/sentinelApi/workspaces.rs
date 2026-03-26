@@ -84,6 +84,7 @@ impl SentinelManager {
         app: &AppHandle,
         candidate_path: String,
         name: Option<String>,
+        mode: Option<WorkspaceMode>,
     ) -> Result<WorkspaceContext, String> {
         let next_project = inspect_project(Path::new(&candidate_path))?;
         let next_project_path = next_project.path.clone().map(PathBuf::from);
@@ -105,6 +106,7 @@ impl SentinelManager {
                 if let Some(workspace) = inner.workspaces.get_mut(&existing_workspace_id) {
                     workspace.project = next_project.clone();
                     workspace.name = normalized_workspace_name(name.as_deref(), &next_project);
+                    workspace.mode = mode.unwrap_or(workspace.mode);
                 }
                 existing_workspace_id
             } else {
@@ -119,6 +121,7 @@ impl SentinelManager {
                     created_at: now,
                     last_active_at: now,
                     default_session_strategy: inner.preferences.default_session_strategy,
+                    mode: mode.unwrap_or(WorkspaceMode::Local),
                 };
                 inner.workspaces.insert(workspace_id.clone(), workspace);
                 workspace_id
@@ -147,6 +150,7 @@ impl SentinelManager {
             Some(serde_json::json!({
                 "name": workspace.name.clone(),
                 "projectPath": workspace.project.path.clone(),
+                "mode": workspace.mode,
             })),
         );
 

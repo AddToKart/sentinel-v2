@@ -11,17 +11,25 @@ fn workspace_strategy_to_str(strategy: SessionWorkspaceStrategy) -> &'static str
     }
 }
 
+fn workspace_metadata_json(ws: &WorkspaceContext) -> String {
+    serde_json::json!({
+        "mode": ws.mode,
+    })
+    .to_string()
+}
+
 impl WorkspaceRepository {
     pub async fn create(pool: &SqlitePool, ws: &WorkspaceContext) -> Result<(), sqlx::Error> {
         let is_git_repo = ws.project.is_git_repo as i64;
         let strategy = workspace_strategy_to_str(ws.default_session_strategy);
+        let metadata = workspace_metadata_json(ws);
 
         sqlx::query(
             r#"
             INSERT INTO workspaces
                 (id, name, project_path, project_name, is_git_repo, git_branch,
-                 default_session_strategy, created_at, last_active_at, is_active)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)
+                 default_session_strategy, created_at, last_active_at, is_active, metadata)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)
             ON CONFLICT(id) DO NOTHING
             "#,
         )
@@ -34,6 +42,7 @@ impl WorkspaceRepository {
         .bind(&strategy)
         .bind(ws.created_at)
         .bind(ws.last_active_at)
+        .bind(metadata)
         .execute(pool)
         .await?;
 
@@ -43,6 +52,7 @@ impl WorkspaceRepository {
     pub async fn update(pool: &SqlitePool, ws: &WorkspaceContext) -> Result<(), sqlx::Error> {
         let is_git_repo = ws.project.is_git_repo as i64;
         let strategy = workspace_strategy_to_str(ws.default_session_strategy);
+        let metadata = workspace_metadata_json(ws);
 
         sqlx::query(
             r#"
@@ -53,7 +63,8 @@ impl WorkspaceRepository {
                 is_git_repo = ?5,
                 git_branch = ?6,
                 default_session_strategy = ?7,
-                last_active_at = ?8
+                last_active_at = ?8,
+                metadata = ?9
             WHERE id = ?1
             "#,
         )
@@ -65,6 +76,7 @@ impl WorkspaceRepository {
         .bind(&ws.project.branch)
         .bind(&strategy)
         .bind(ws.last_active_at)
+        .bind(metadata)
         .execute(pool)
         .await?;
 
@@ -74,13 +86,14 @@ impl WorkspaceRepository {
     pub async fn upsert(pool: &SqlitePool, ws: &WorkspaceContext) -> Result<(), sqlx::Error> {
         let is_git_repo = ws.project.is_git_repo as i64;
         let strategy = workspace_strategy_to_str(ws.default_session_strategy);
+        let metadata = workspace_metadata_json(ws);
 
         sqlx::query(
             r#"
             INSERT INTO workspaces
                 (id, name, project_path, project_name, is_git_repo, git_branch,
-                 default_session_strategy, created_at, last_active_at, is_active)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)
+                 default_session_strategy, created_at, last_active_at, is_active, metadata)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 project_path = excluded.project_path,
@@ -88,7 +101,8 @@ impl WorkspaceRepository {
                 is_git_repo = excluded.is_git_repo,
                 git_branch = excluded.git_branch,
                 default_session_strategy = excluded.default_session_strategy,
-                last_active_at = excluded.last_active_at
+                last_active_at = excluded.last_active_at,
+                metadata = excluded.metadata
             "#,
         )
         .bind(&ws.id)
@@ -100,6 +114,7 @@ impl WorkspaceRepository {
         .bind(strategy)
         .bind(ws.created_at)
         .bind(ws.last_active_at)
+        .bind(metadata)
         .execute(pool)
         .await?;
 

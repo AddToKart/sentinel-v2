@@ -165,6 +165,11 @@ export function WorkspaceSwitcher({
                   {activeUnreadCount} alert{activeUnreadCount === 1 ? '' : 's'}
                 </span>
               )}
+              {activeWorkspace && (
+                <span className="border border-sky-300/20 bg-sky-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sky-100">
+                  {activeWorkspace.mode}
+                </span>
+              )}
               <span className="border border-white/10 bg-black/25 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sentinel-mist/85">
                 {activeSessionCount} sessions
               </span>
@@ -278,6 +283,9 @@ export function WorkspaceSwitcher({
                                   {unreadCount} alert{unreadCount === 1 ? '' : 's'}
                                 </span>
                               )}
+                              <span className="border border-sky-300/20 bg-sky-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sky-100">
+                                {workspace.mode}
+                              </span>
                               {active && (
                                 <span className="border border-sentinel-accent/35 bg-black/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.22em] text-white">
                                   current

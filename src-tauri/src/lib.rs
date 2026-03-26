@@ -10,7 +10,7 @@ use models::{
     BootstrapPayload, CommandHistoryEntry, CreateSessionInput, FileChangeEntry, IdeTerminalState,
     ProjectState, SessionApplyResult, SessionCommitResult, SessionSummary,
     SessionWorkspaceStrategy, SnapshotSummary, TabSummary, WorkspaceAnalytics, WorkspaceContext,
-    WorkspacePreferences,
+    WorkspaceMode, WorkspacePreferences,
 };
 use sentinel::SentinelManager;
 use tauri::{AppHandle, Manager, RunEvent, State};
@@ -38,8 +38,9 @@ fn create_workspace(
     state: State<'_, Arc<SentinelManager>>,
     candidate_path: String,
     name: Option<String>,
+    mode: Option<WorkspaceMode>,
 ) -> Result<WorkspaceContext, String> {
-    state.create_workspace(&app, candidate_path, name)
+    state.create_workspace(&app, candidate_path, name, mode)
 }
 
 #[tauri::command]

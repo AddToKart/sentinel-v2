@@ -144,6 +144,15 @@ impl SentinelManager {
             )
         };
 
+        let workspace_ids = workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect::<HashSet<_>>();
+        let workspace_modes = workspaces
+            .iter()
+            .map(|workspace| (workspace.id.clone(), workspace.mode))
+            .collect::<HashMap<_, _>>();
+
         let pool = database_pool(app);
         let session_rows =
             tauri::async_runtime::block_on(crate::database::repositories::SessionRepository::find_all(
@@ -161,8 +170,12 @@ impl SentinelManager {
         let mut histories_by_id = HashMap::<String, SessionHistoryUpdate>::new();
         let mut diffs_by_id = HashMap::<String, SessionDiffUpdate>::new();
 
-        for row in session_rows {
-            let summary = session_summary_from_row(row);
+        for row in session_rows.into_iter().filter(|row| workspace_ids.contains(&row.workspace_id)) {
+            let workspace_mode = workspace_modes
+                .get(&row.workspace_id)
+                .copied()
+                .unwrap_or(WorkspaceMode::Local);
+            let summary = session_summary_from_row(row, workspace_mode);
             let session_id = summary.id.clone();
             let workspace_id = summary.workspace_id.clone();
             let command_rows = tauri::async_runtime::block_on(
@@ -227,7 +240,7 @@ impl SentinelManager {
 
         let mut tabs_by_id = HashMap::<String, TabSummary>::new();
         let mut tab_metrics_by_id = HashMap::<String, TabMetricsUpdate>::new();
-        for row in tab_rows {
+        for row in tab_rows.into_iter().filter(|row| workspace_ids.contains(&row.workspace_id)) {
             let summary = tab_summary_from_row(row);
             if matches!(summary.status, TabStatus::Closed | TabStatus::Error) {
                 continue;
@@ -326,6 +339,10 @@ impl SentinelManager {
                 .or(persisted_ide_terminal)
                 .unwrap_or_else(IdeTerminalState::idle),
             windows_build_number,
+            cloud_config: CloudConfig {
+                url: "http://127.0.0.1:42069".to_string(),
+                enabled: true,
+            },
         })
     }
 
@@ -368,7 +385,7 @@ impl SentinelManager {
         app: &AppHandle,
         candidate_path: String,
     ) -> Result<ProjectState, String> {
-        Ok(self.create_workspace(app, candidate_path, None)?.project)
+        Ok(self.create_workspace(app, candidate_path, None, Some(WorkspaceMode::Local))?.project)
     }
 
     pub fn refresh_project(&self, app: &AppHandle) -> Result<ProjectState, String> {

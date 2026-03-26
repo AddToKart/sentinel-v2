@@ -29,6 +29,13 @@ pub enum SessionWorkspaceStrategy {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+pub enum WorkspaceMode {
+    Local,
+    Cloud,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum IdeStatus {
     Idle,
     Starting,
@@ -124,6 +131,7 @@ pub struct SessionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub metrics: ProcessMetrics,
+    pub mode: WorkspaceMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -321,6 +329,8 @@ pub struct WorkspacePreferences {
     pub default_session_strategy: SessionWorkspaceStrategy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -334,6 +344,7 @@ pub struct WorkspaceContext {
     pub created_at: i64,
     pub last_active_at: i64,
     pub default_session_strategy: SessionWorkspaceStrategy,
+    pub mode: WorkspaceMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -364,6 +375,13 @@ pub struct IdeTerminalState {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CloudConfig {
+    pub url: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapPayload {
     pub project: ProjectState,
     pub workspaces: Vec<WorkspaceContext>,
@@ -381,6 +399,7 @@ pub struct BootstrapPayload {
     pub ide_terminal: IdeTerminalState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub windows_build_number: Option<u32>,
+    pub cloud_config: CloudConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -419,6 +438,7 @@ impl Default for WorkspacePreferences {
         Self {
             default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
             last_workspace_id: None,
+            cloud_token: Some("v8j5P-2m9Xy-L7q-3N1K-s4w0z_sentinel_cloud_key".to_string()),
         }
     }
 }

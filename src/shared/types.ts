@@ -1,3 +1,5 @@
+export type WorkspaceMode = 'local' | 'cloud'
+
 export type SessionStatus = 'starting' | 'ready' | 'closing' | 'paused' | 'closed' | 'error'
 
 export type CleanupState = 'active' | 'removed' | 'preserved' | 'failed'
@@ -58,6 +60,7 @@ export interface SessionSummary {
   exitCode?: number | null
   error?: string
   metrics: ProcessMetrics
+  mode: WorkspaceMode
 }
 
 export interface TabSummary {
@@ -107,6 +110,7 @@ export interface WorkspaceContext {
   createdAt: number
   lastActiveAt: number
   defaultSessionStrategy: SessionWorkspaceStrategy
+  mode: WorkspaceMode
 }
 
 export interface WorkspaceRemovedEvent {
@@ -256,6 +260,7 @@ export interface SessionCommitResult {
 export interface WorkspacePreferences {
   defaultSessionStrategy: SessionWorkspaceStrategy
   lastWorkspaceId?: string
+  cloudToken?: string
 }
 
 export interface IdeTerminalState {
@@ -285,6 +290,10 @@ export interface BootstrapPayload {
   preferences: WorkspacePreferences
   ideTerminal: IdeTerminalState
   windowsBuildNumber?: number
+  cloudConfig?: {
+    url: string
+    enabled: boolean
+  }
 }
 
 export interface CreateSessionInput {
@@ -306,8 +315,9 @@ export interface IdeTerminalOutputEvent {
 
 export interface SentinelApi {
   bootstrap: () => Promise<BootstrapPayload>
+  pickProjectDirectory: () => Promise<string | null>
   selectProject: () => Promise<ProjectState>
-  createWorkspace: (candidatePath: string, name?: string) => Promise<WorkspaceContext>
+  createWorkspace: (candidatePath: string, name?: string, mode?: WorkspaceMode) => Promise<WorkspaceContext>
   listWorkspaces: () => Promise<WorkspaceContext[]>
   switchWorkspace: (workspaceId: string) => Promise<WorkspaceContext>
   closeWorkspace: (workspaceId: string, closeSessions: boolean) => Promise<void>
@@ -373,4 +383,5 @@ declare global {
   }
 }
 
-export {}
+export { }
+

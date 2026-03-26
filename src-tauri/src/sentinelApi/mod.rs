@@ -1,10 +1,11 @@
 use crate::models::{
-    ActivityLogEntry, AuditLogEntry, BootstrapPayload, CleanupState, CommandHistoryEntry,
+    ActivityLogEntry, AuditLogEntry, BootstrapPayload, CleanupState, CloudConfig, CommandHistoryEntry,
     CreateSessionInput, FileChangeEntry, IdeStatus, IdeTerminalState, ProcessMetrics, ProjectNode,
     ProjectState, SessionApplyResult, SessionCommandEntry, SessionCommitResult, SessionDiffUpdate,
     SessionHistoryUpdate, SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
     SessionWorkspaceStrategy, SnapshotSummary, TabMetricsUpdate, TabOutputEvent, TabStateUpdate,
-    TabStatus, TabSummary, TabType, WorkspaceAnalytics, WorkspaceContext, WorkspacePreferences,
+    TabStatus, TabSummary, TabType, WorkspaceAnalytics, WorkspaceContext, WorkspaceMode,
+    WorkspacePreferences,
     WorkspaceRemovedEvent, WorkspaceSummary,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
