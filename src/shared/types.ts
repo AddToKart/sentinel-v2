@@ -1,4 +1,6 @@
-export type SessionStatus = 'starting' | 'ready' | 'closing' | 'closed' | 'error'
+export type WorkspaceMode = 'local' | 'cloud'
+
+export type SessionStatus = 'starting' | 'ready' | 'closing' | 'paused' | 'closed' | 'error'
 
 export type CleanupState = 'active' | 'removed' | 'preserved' | 'failed'
 
@@ -58,6 +60,7 @@ export interface SessionSummary {
   exitCode?: number | null
   error?: string
   metrics: ProcessMetrics
+  mode: WorkspaceMode
 }
 
 export interface TabSummary {
@@ -107,6 +110,7 @@ export interface WorkspaceContext {
   createdAt: number
   lastActiveAt: number
   defaultSessionStrategy: SessionWorkspaceStrategy
+  mode: WorkspaceMode
 }
 
 export interface WorkspaceRemovedEvent {
@@ -134,12 +138,77 @@ export interface WorkspaceSummary {
 
 export interface ActivityLogEntry {
   id: string
+  workspaceId?: string
   timestamp: number
   scope: 'git' | 'workspace'
   status: 'started' | 'completed' | 'failed'
   command: string
   cwd: string
   detail?: string
+}
+
+export interface CommandHistoryEntry {
+  id: number
+  sessionId: string
+  workspaceId: string
+  command: string
+  timestamp: number
+  source: string
+  exitCode?: number | null
+  durationMs?: number
+  cwd?: string
+}
+
+export interface FileChangeEntry {
+  id: number
+  sessionId: string
+  workspaceId: string
+  filePath: string
+  changeType: string
+  beforeHash?: string
+  afterHash?: string
+  timestamp: number
+  fileSize?: number
+}
+
+export interface AuditLogEntry {
+  id: number
+  workspaceId?: string
+  sessionId?: string
+  tabId?: string
+  timestamp: number
+  actionType: string
+  resourceType: string
+  resourceId: string
+  details?: string
+  userId?: string
+}
+
+export interface WorkspaceAnalytics {
+  workspaceId: string
+  totalSessions: number
+  activeSessions: number
+  totalTabs: number
+  activeTabs: number
+  totalCommands: number
+  totalFileChanges: number
+  uniqueFilesChanged: number
+  totalActivityEntries: number
+  totalSnapshots: number
+  averageSessionCpuPercent: number
+  averageSessionMemoryMb: number
+  latestActivityAt?: number
+  latestSnapshotAt?: number
+}
+
+export interface SnapshotSummary {
+  id: string
+  workspaceId: string
+  name: string
+  description?: string
+  createdAt: number
+  fileCount: number
+  sessionCount: number
 }
 
 export interface SessionCommandEntry {
@@ -191,6 +260,7 @@ export interface SessionCommitResult {
 export interface WorkspacePreferences {
   defaultSessionStrategy: SessionWorkspaceStrategy
   lastWorkspaceId?: string
+  cloudToken?: string
 }
 
 export interface IdeTerminalState {
@@ -220,6 +290,10 @@ export interface BootstrapPayload {
   preferences: WorkspacePreferences
   ideTerminal: IdeTerminalState
   windowsBuildNumber?: number
+  cloudConfig?: {
+    url: string
+    enabled: boolean
+  }
 }
 
 export interface CreateSessionInput {
@@ -241,8 +315,9 @@ export interface IdeTerminalOutputEvent {
 
 export interface SentinelApi {
   bootstrap: () => Promise<BootstrapPayload>
+  pickProjectDirectory: () => Promise<string | null>
   selectProject: () => Promise<ProjectState>
-  createWorkspace: (candidatePath: string, name?: string) => Promise<WorkspaceContext>
+  createWorkspace: (candidatePath: string, name?: string, mode?: WorkspaceMode) => Promise<WorkspaceContext>
   listWorkspaces: () => Promise<WorkspaceContext[]>
   switchWorkspace: (workspaceId: string) => Promise<WorkspaceContext>
   closeWorkspace: (workspaceId: string, closeSessions: boolean) => Promise<void>
@@ -253,6 +328,9 @@ export interface SentinelApi {
   setDefaultSessionStrategy: (strategy: SessionWorkspaceStrategy) => Promise<WorkspacePreferences>
   createSession: (input?: CreateSessionInput) => Promise<SessionSummary>
   closeSession: (sessionId: string) => Promise<void>
+  pauseSession: (sessionId: string) => Promise<void>
+  resumeSession: (sessionId: string) => Promise<SessionSummary>
+  deleteSession: (sessionId: string) => Promise<void>
   resizeSession: (sessionId: string, cols: number, rows: number) => Promise<void>
   sendInput: (sessionId: string, data: string) => Promise<void>
   ensureIdeTerminal: () => Promise<IdeTerminalState>
@@ -273,6 +351,13 @@ export interface SentinelApi {
   closeTab: (tabId: string) => Promise<void>
   resizeTab: (tabId: string, cols: number, rows: number) => Promise<void>
   sendTabInput: (tabId: string, data: string) => Promise<void>
+  searchCommandHistory: (workspaceId: string, query: string, limit?: number) => Promise<CommandHistoryEntry[]>
+  getFileChangeTimeline: (workspaceId: string, filePath?: string, limit?: number) => Promise<FileChangeEntry[]>
+  getWorkspaceAnalytics: (workspaceId: string) => Promise<WorkspaceAnalytics>
+  exportAuditLog: (workspaceId: string, startTimestamp?: number, endTimestamp?: number, format?: 'json' | 'csv') => Promise<string>
+  createWorkspaceSnapshot: (workspaceId: string, name: string, description?: string) => Promise<SnapshotSummary>
+  restoreWorkspaceSnapshot: (snapshotId: string) => Promise<WorkspaceContext>
+  listWorkspaceSnapshots: (workspaceId: string) => Promise<SnapshotSummary[]>
   onSessionOutput: (listener: (event: SessionOutputEvent) => void) => () => void
   onIdeTerminalOutput: (listener: (event: IdeTerminalOutputEvent) => void) => () => void
   onProjectState: (listener: (project: ProjectState) => void) => () => void
@@ -298,4 +383,5 @@ declare global {
   }
 }
 
-export {}
+export { }
+

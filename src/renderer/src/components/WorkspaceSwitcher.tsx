@@ -20,6 +20,10 @@ import type { WorkspaceContext } from '@shared/types'
 interface WorkspaceSwitcherProps {
   workspaces: WorkspaceContext[]
   activeWorkspaceId: string | null
+  runningSessionCounts: Record<string, number>
+  sessionCounts: Record<string, number>
+  tabCounts: Record<string, number>
+  unreadNotificationCounts: Record<string, number>
   onCreateWorkspace: () => void
   onSwitchWorkspace: (workspaceId: string) => void
   onWorkspaceAction: (workspaceId: string, action: 'delete' | 'stop' | 'pause') => void
@@ -41,6 +45,10 @@ function matchesWorkspace(workspace: WorkspaceContext, query: string): boolean {
 export function WorkspaceSwitcher({
   workspaces,
   activeWorkspaceId,
+  runningSessionCounts,
+  sessionCounts,
+  tabCounts,
+  unreadNotificationCounts,
   onCreateWorkspace,
   onSwitchWorkspace,
   onWorkspaceAction
@@ -62,6 +70,10 @@ export function WorkspaceSwitcher({
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null
   const filteredWorkspaces = workspaces.filter((workspace) => matchesWorkspace(workspace, query))
+  const activeRunningCount = activeWorkspaceId ? (runningSessionCounts[activeWorkspaceId] ?? 0) : 0
+  const activeSessionCount = activeWorkspaceId ? (sessionCounts[activeWorkspaceId] ?? 0) : 0
+  const activeTabCount = activeWorkspaceId ? (tabCounts[activeWorkspaceId] ?? 0) : 0
+  const activeUnreadCount = activeWorkspaceId ? (unreadNotificationCounts[activeWorkspaceId] ?? 0) : 0
 
   useEffect(() => {
     if (!open) {
@@ -142,11 +154,27 @@ export function WorkspaceSwitcher({
             </div>
 
             <div className="hidden shrink-0 items-center gap-1 md:flex">
+              {activeRunningCount > 0 && (
+                <span className="workspace-running-badge inline-flex items-center gap-1 border border-emerald-300/20 bg-emerald-400/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-100">
+                  <span className="workspace-running-dot h-1.5 w-1.5 bg-emerald-200" />
+                  running
+                </span>
+              )}
+              {activeUnreadCount > 0 && (
+                <span className="border border-amber-300/20 bg-amber-300/12 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-amber-100">
+                  {activeUnreadCount} alert{activeUnreadCount === 1 ? '' : 's'}
+                </span>
+              )}
+              {activeWorkspace && (
+                <span className="border border-sky-300/20 bg-sky-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sky-100">
+                  {activeWorkspace.mode}
+                </span>
+              )}
               <span className="border border-white/10 bg-black/25 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sentinel-mist/85">
-                {activeWorkspace?.sessionIds.length ?? 0} sessions
+                {activeSessionCount} sessions
               </span>
               <span className="border border-white/10 bg-black/25 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sentinel-mist/85">
-                {activeWorkspace?.tabIds.length ?? 0} tabs
+                {activeTabCount} tabs
               </span>
             </div>
 
@@ -213,6 +241,10 @@ export function WorkspaceSwitcher({
                 <div className="space-y-2">
                   {filteredWorkspaces.map((workspace) => {
                     const active = workspace.id === activeWorkspaceId
+                    const runningCount = runningSessionCounts[workspace.id] ?? 0
+                    const workspaceSessionCount = sessionCounts[workspace.id] ?? workspace.sessionIds.length
+                    const workspaceTabCount = tabCounts[workspace.id] ?? workspace.tabIds.length
+                    const unreadCount = unreadNotificationCounts[workspace.id] ?? 0
 
                     return (
                       <div
@@ -240,6 +272,20 @@ export function WorkspaceSwitcher({
                               <span className="truncate text-sm font-semibold text-white">
                                 {workspace.name}
                               </span>
+                              {runningCount > 0 && (
+                                <span className="workspace-running-badge inline-flex items-center gap-1 border border-emerald-300/20 bg-emerald-400/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-100">
+                                  <span className="workspace-running-dot h-1.5 w-1.5 bg-emerald-200" />
+                                  running
+                                </span>
+                              )}
+                              {unreadCount > 0 && (
+                                <span className="inline-flex items-center gap-1 border border-amber-300/20 bg-amber-300/12 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-amber-100">
+                                  {unreadCount} alert{unreadCount === 1 ? '' : 's'}
+                                </span>
+                              )}
+                              <span className="border border-sky-300/20 bg-sky-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sky-100">
+                                {workspace.mode}
+                              </span>
                               {active && (
                                 <span className="border border-sentinel-accent/35 bg-black/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.22em] text-white">
                                   current
@@ -254,11 +300,11 @@ export function WorkspaceSwitcher({
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-sentinel-mist/85">
                               <span className="inline-flex items-center gap-1 border border-white/10 bg-black/25 px-1.5 py-0.5">
                                 <TerminalSquare className="h-3 w-3" />
-                                {workspace.sessionIds.length} sessions
+                                {workspaceSessionCount} sessions
                               </span>
                               <span className="inline-flex items-center gap-1 border border-white/10 bg-black/25 px-1.5 py-0.5">
                                 <Layers3 className="h-3 w-3" />
-                                {workspace.tabIds.length} tabs
+                                {workspaceTabCount} tabs
                               </span>
                               {workspace.project.branch && (
                                 <span className="inline-flex items-center gap-1 border border-sentinel-ice/25 bg-sentinel-ice/10 px-1.5 py-0.5 text-sentinel-ice">

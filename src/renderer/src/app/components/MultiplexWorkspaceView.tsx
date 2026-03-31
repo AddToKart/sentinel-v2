@@ -10,12 +10,17 @@ interface MultiplexWorkspaceViewProps {
   hasProject: boolean
   histories: Record<string, SessionCommandEntry[]>
   maximizedSessionId: string | null
+  onDeleteSession: (sessionId: string) => Promise<void>
   sessionDiffs: Record<string, string[]>
   sessions: SessionSummary[]
   windowsBuildNumber?: number
   onCloseSession: (sessionId: string) => Promise<void>
   onOpenProject: () => void
+  onPauseSession: (sessionId: string) => Promise<void>
+  onResumeSession: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
+  layoutMode: 'grid' | 'master-stack'
+  onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
 }
 
 export function MultiplexWorkspaceView({
@@ -23,12 +28,17 @@ export function MultiplexWorkspaceView({
   hasProject,
   histories,
   maximizedSessionId,
+  onDeleteSession,
   sessionDiffs,
   sessions,
   windowsBuildNumber,
   onCloseSession,
   onOpenProject,
-  onToggleMaximize
+  onPauseSession,
+  onResumeSession,
+  onToggleMaximize,
+  layoutMode,
+  onSetLayoutMode
 }: MultiplexWorkspaceViewProps): JSX.Element {
   if (!hasProject) {
     return (
@@ -65,11 +75,16 @@ export function MultiplexWorkspaceView({
         fitNonce={fitNonce}
         histories={histories}
         maximizedSessionId={maximizedSessionId}
+        onDelete={onDeleteSession}
         onClose={onCloseSession}
+        onPause={onPauseSession}
+        onResume={onResumeSession}
         onToggleMaximize={onToggleMaximize}
         sessionDiffs={sessionDiffs}
         sessions={sessions}
         windowsBuildNumber={windowsBuildNumber}
+        layoutMode={layoutMode}
+        onSetLayoutMode={onSetLayoutMode}
       />
     </Suspense>
   )

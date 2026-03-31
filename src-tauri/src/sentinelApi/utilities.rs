@@ -125,6 +125,27 @@ fn should_link_directory(name: &str) -> bool {
     )
 }
 
+fn should_traverse_directory(path: &Path, file_type: &fs::FileType) -> bool {
+    if !file_type.is_dir() || file_type.is_symlink() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 fn inspect_project(candidate_path: &Path) -> Result<ProjectState, String> {
     let requested_path = candidate_path
         .canonicalize()
@@ -183,11 +204,9 @@ fn build_project_tree(root_path: &Path, depth: usize) -> Result<Vec<ProjectNode>
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry
-            .file_type()
-            .map(|value| value.is_dir())
-            .unwrap_or(false);
-        let children = if is_dir && depth > 0 {
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let is_dir = file_type.is_dir();
+        let children = if depth > 0 && should_traverse_directory(&path, &file_type) {
             build_project_tree(&path, depth - 1).ok()
         } else {
             None
@@ -251,6 +270,7 @@ where
             EVENT_ACTIVITY_LOG,
             &ActivityLogEntry {
                 id: format!("{}-{}", create_timestamp(), create_token()),
+                workspace_id: None,
                 timestamp: now_millis(),
                 scope: "git".to_string(),
                 status: "started".to_string(),

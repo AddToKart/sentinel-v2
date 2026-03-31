@@ -1,5 +1,5 @@
-import { Fragment, useState } from 'react'
-import { GripHorizontal, GripVertical, LayoutGrid, Sidebar as SidebarIcon } from 'lucide-react'
+import { Fragment } from 'react'
+import { GripHorizontal, GripVertical } from 'lucide-react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 
 import type { SessionCommandEntry, SessionSummary } from '@shared/types'
@@ -11,10 +11,15 @@ interface AgentDashboardProps {
   histories: Record<string, SessionCommandEntry[]>
   sessionDiffs: Record<string, string[]>
   onClose: (sessionId: string) => Promise<void>
+  onPause: (sessionId: string) => Promise<void>
+  onResume: (sessionId: string) => Promise<void>
+  onDelete: (sessionId: string) => Promise<void>
   onToggleMaximize: (sessionId: string) => void
   maximizedSessionId: string | null
   fitNonce: number
   windowsBuildNumber?: number
+  layoutMode: 'grid' | 'master-stack'
+  onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
 }
 
 function getColumnCount(sessionCount: number): number {
@@ -72,13 +77,15 @@ export function AgentDashboard({
   histories,
   sessionDiffs,
   onClose,
+  onPause,
+  onResume,
+  onDelete,
   onToggleMaximize,
   maximizedSessionId,
   fitNonce,
-  windowsBuildNumber
+  windowsBuildNumber,
+  layoutMode
 }: AgentDashboardProps): JSX.Element {
-  const [layoutMode, setLayoutMode] = useState<'grid' | 'master-stack'>('master-stack')
-
   const visibleSessions = maximizedSessionId
     ? sessions.filter((session) => session.id === maximizedSessionId)
     : sessions
@@ -96,8 +103,11 @@ export function AgentDashboard({
             fitNonce={fitNonce}
             historyEntries={histories[session.id] ?? []}
             modifiedPaths={sessionDiffs[session.id] || []}
+            onDelete={onDelete}
             isMaximized
             onClose={onClose}
+            onPause={onPause}
+            onResume={onResume}
             onToggleMaximize={onToggleMaximize}
             session={session}
             applySession={() => window.sentinel.applySession(session.id)}
@@ -110,38 +120,12 @@ export function AgentDashboard({
     )
   }
 
-  const renderLayoutToggle = () => (
-    <div className="absolute top-4 right-4 z-50 flex items-center gap-1 rounded border border-white/10 bg-black/60 p-1 backdrop-blur shadow-xl">
-      <button
-        className={`rounded p-1.5 text-xs transition ${
-          layoutMode === 'grid' ? 'bg-sentinel-accent/20 text-white' : 'text-sentinel-mist hover:text-white'
-        }`}
-        onClick={() => setLayoutMode('grid')}
-        title="Even Quadrant Grid"
-        type="button"
-      >
-        <LayoutGrid className="h-3.5 w-3.5" />
-      </button>
-      <button
-        className={`rounded p-1.5 text-xs transition ${
-          layoutMode === 'master-stack' ? 'bg-sentinel-accent/20 text-white' : 'text-sentinel-mist hover:text-white'
-        }`}
-        onClick={() => setLayoutMode('master-stack')}
-        title="Master-Stack Layout"
-        type="button"
-      >
-        <SidebarIcon className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  )
-
   if (layoutMode === 'master-stack' && visibleSessions.length >= 3) {
     const masterSession = visibleSessions[0]
     const stackSessions = visibleSessions.slice(1)
 
     return (
-      <div className="relative h-full min-h-0 min-w-0 overflow-hidden border border-white/10 bg-black/10 p-2">
-        {renderLayoutToggle()}
+      <div className="h-full min-h-0 min-w-0 overflow-hidden border border-white/10 bg-black/10 p-2">
         <Group className="h-full min-h-0" orientation="horizontal">
           <Panel className="min-h-0 min-w-0" defaultSize={65} minSize={30}>
             <div className="h-full min-h-0 min-w-0 p-1.5">
@@ -149,8 +133,11 @@ export function AgentDashboard({
                 fitNonce={fitNonce}
                 historyEntries={histories[masterSession.id] ?? []}
                 modifiedPaths={sessionDiffs[masterSession.id] || []}
+                onDelete={onDelete}
                 isMaximized={false}
                 onClose={onClose}
+                onPause={onPause}
+                onResume={onResume}
                 onToggleMaximize={onToggleMaximize}
                 session={masterSession}
                 applySession={() => window.sentinel.applySession(masterSession.id)}
@@ -172,8 +159,11 @@ export function AgentDashboard({
                         fitNonce={fitNonce}
                         historyEntries={histories[session.id] ?? []}
                         modifiedPaths={sessionDiffs[session.id] || []}
+                        onDelete={onDelete}
                         isMaximized={false}
                         onClose={onClose}
+                        onPause={onPause}
+                        onResume={onResume}
                         onToggleMaximize={onToggleMaximize}
                         session={session}
                         applySession={() => window.sentinel.applySession(session.id)}
@@ -195,8 +185,7 @@ export function AgentDashboard({
   const rows = buildRows(visibleSessions)
 
   return (
-    <div className="relative h-full min-h-0 min-w-0 overflow-hidden border border-white/10 bg-black/10 p-2">
-      {visibleSessions.length >= 3 && renderLayoutToggle()}
+    <div className="h-full min-h-0 min-w-0 overflow-hidden border border-white/10 bg-black/10 p-2">
       <Group className="h-full min-h-0" orientation="vertical">
         {rows.map((row, rowIndex) => {
           const rowId = row.map((session) => session.id).join('-')
@@ -222,8 +211,11 @@ export function AgentDashboard({
                             fitNonce={fitNonce}
                             historyEntries={histories[session.id] ?? []}
                             modifiedPaths={sessionDiffs[session.id] || []}
+                            onDelete={onDelete}
                             isMaximized={false}
                             onClose={onClose}
+                            onPause={onPause}
+                            onResume={onResume}
                             onToggleMaximize={onToggleMaximize}
                             session={session}
                             applySession={() => window.sentinel.applySession(session.id)}

@@ -29,35 +29,45 @@ export function IdeTerminalGroup({
   onCloseTerminal,
   onToggleCollapse
 }: IdeTerminalGroupProps): JSX.Element {
-  // Ensure the active tab actually exists, otherwise fallback to ide-workspace
   const isValidTab = activeTerminalId === 'ide-workspace' || tabs.some(t => t.id === activeTerminalId)
   const displayId = isValidTab ? activeTerminalId : 'ide-workspace'
-  
   const [actionsTarget, setActionsTarget] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="flex h-full w-full bg-[#0d1117] overflow-hidden">
-      {/* Left: Active Terminal Content */}
+      {/* Left: Active Terminal Content — ALL terminals stay mounted to preserve the xterm
+          WebGL canvas. Only visibility is toggled to prevent canvas destroy/recreate
+          on tab switch, which caused display corruption. */}
       <div className="flex-1 min-w-0 h-full relative border-r border-white/10">
-        <div className={`absolute inset-0 transition-opacity duration-200 ${displayId === 'ide-workspace' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+        {/* IDE Workspace terminal — always mounted */}
+        <div
+          className="absolute inset-0"
+          style={{ zIndex: displayId === 'ide-workspace' ? 10 : 0, visibility: displayId === 'ide-workspace' ? 'visible' : 'hidden', pointerEvents: displayId === 'ide-workspace' ? 'auto' : 'none' }}
+          aria-hidden={displayId !== 'ide-workspace'}
+        >
           <IdeTerminalPanel
             fitNonce={fitNonce}
             projectPath={projectPath}
             terminalState={ideTerminalState}
             windowsBuildNumber={windowsBuildNumber}
             onClose={onToggleCollapse}
-            actionsTarget={displayId === 'ide-workspace' ? actionsTarget : null}
+            actionsTarget={actionsTarget}
             isVisible={displayId === 'ide-workspace'}
           />
         </div>
 
-        {tabs.map(tab => (
+        {/* Standalone tab terminals — all tabs stay mounted */}
+        {tabs.map((tab) => (
           <div
             key={tab.id}
-            className={`absolute inset-0 transition-opacity duration-200 ${displayId === tab.id ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}
+            className="absolute inset-0"
+            style={{
+              zIndex: displayId === tab.id ? 10 : 0,
+              visibility: displayId === tab.id ? 'visible' : 'hidden',
+              pointerEvents: displayId === tab.id ? 'auto' : 'none'
+            }}
+            aria-hidden={displayId !== tab.id}
           >
-            {/* We render the standalone terminal. If we wanted, we could also pass 
-                actionsTarget here, but StandaloneTerminalTile has its own header. */}
             <StandaloneTerminalTile
               tab={tab}
               fitNonce={fitNonce}

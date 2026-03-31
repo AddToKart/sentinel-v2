@@ -83,6 +83,16 @@ fn update_workspace_summary(inner: &mut SentinelState) {
             )
         })
         .collect::<Vec<_>>();
+    let active_tab_records = inner
+        .tabs
+        .values()
+        .filter(|record| {
+            matches!(
+                record.summary.status,
+                TabStatus::Starting | TabStatus::Ready | TabStatus::Closing
+            )
+        })
+        .collect::<Vec<_>>();
 
     let active_workspace_id = inner.active_workspace_id.clone();
     let active_workspace = active_workspace_clone(inner);
@@ -97,18 +107,33 @@ fn update_workspace_summary(inner: &mut SentinelState) {
         })
         .unwrap_or(0);
 
-    let active_workspace_tab_count = active_workspace
-        .as_ref()
-        .map(|workspace| workspace.tab_ids.len())
+    let active_workspace_tab_count = active_workspace_id
+        .as_deref()
+        .map(|workspace_id| {
+            active_tab_records
+                .iter()
+                .filter(|record| record.summary.workspace_id == workspace_id)
+                .count()
+        })
         .unwrap_or(0);
+    let total_sessions = inner
+        .workspaces
+        .values()
+        .map(|workspace| workspace.session_ids.len())
+        .sum();
+    let total_tabs = inner
+        .workspaces
+        .values()
+        .map(|workspace| workspace.tab_ids.len())
+        .sum();
 
     inner.workspace_summary = WorkspaceSummary {
         active_sessions: active_session_records.len(),
         active_workspace_session_count,
         active_workspace_tab_count,
         workspace_count: inner.workspaces.len(),
-        total_sessions: inner.sessions.len(),
-        total_tabs: inner.tabs.len(),
+        total_sessions,
+        total_tabs,
         total_cpu_percent: round(
             active_session_records
                 .iter()

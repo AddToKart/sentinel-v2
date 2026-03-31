@@ -9,12 +9,23 @@ interface OutputBuffer {
 
 interface OutputStore {
   clear: (key: string) => void
+  connect: (key: string, listener: OutputListener) => { replayData: string; unsubscribe: () => void }
   push: (key: string, data: string) => void
   subscribe: (key: string, listener: OutputListener, replay?: boolean) => () => void
 }
 
+interface TerminalStreamState {
+  ideUnsubscribe: (() => void) | null
+  sessionUnsubscribe: (() => void) | null
+  store: OutputStore
+}
+
 const MAX_BUFFER_LENGTH = 500_000
 const IDE_TERMINAL_KEY = 'ide-terminal'
+
+declare global {
+  var __sentinelTerminalStreamState__: TerminalStreamState | undefined
+}
 
 function createOutputStore(): OutputStore {
   const buffers = new Map<string, OutputBuffer>()
@@ -45,6 +56,31 @@ function createOutputStore(): OutputStore {
     clear(key: string) {
       buffers.delete(key)
       listeners.delete(key)
+    },
+    connect(key: string, listener: OutputListener) {
+      let scopedListeners = listeners.get(key)
+      if (!scopedListeners) {
+        scopedListeners = new Set()
+        listeners.set(key, scopedListeners)
+      }
+
+      scopedListeners.add(listener)
+      const replayData = buffers.get(key)?.chunks.join('') ?? ''
+
+      return {
+        replayData,
+        unsubscribe: () => {
+          const currentListeners = listeners.get(key)
+          if (!currentListeners) {
+            return
+          }
+
+          currentListeners.delete(listener)
+          if (currentListeners.size === 0) {
+            listeners.delete(key)
+          }
+        }
+      }
     },
     push(key: string, data: string) {
       const buffer = getBuffer(key)
@@ -92,13 +128,14 @@ function createOutputStore(): OutputStore {
   }
 }
 
-const store = createOutputStore()
-
-let sessionBridgeStarted = false
-let ideBridgeStarted = false
+const state = globalThis.__sentinelTerminalStreamState__ ??= {
+  ideUnsubscribe: null,
+  sessionUnsubscribe: null,
+  store: createOutputStore()
+}
 
 function ensureSessionBridge(): void {
-  if (sessionBridgeStarted) {
+  if (state.sessionUnsubscribe) {
     return
   }
 
@@ -106,14 +143,13 @@ function ensureSessionBridge(): void {
     return
   }
 
-  sessionBridgeStarted = true
-  window.sentinel.onSessionOutput((event: SessionOutputEvent) => {
-    store.push(event.sessionId, event.data)
+  state.sessionUnsubscribe = window.sentinel.onSessionOutput((event: SessionOutputEvent) => {
+    state.store.push(event.sessionId, event.data)
   })
 }
 
 function ensureIdeBridge(): void {
-  if (ideBridgeStarted) {
+  if (state.ideUnsubscribe) {
     return
   }
 
@@ -121,9 +157,8 @@ function ensureIdeBridge(): void {
     return
   }
 
-  ideBridgeStarted = true
-  window.sentinel.onIdeTerminalOutput((event: IdeTerminalOutputEvent) => {
-    store.push(IDE_TERMINAL_KEY, event.data)
+  state.ideUnsubscribe = window.sentinel.onIdeTerminalOutput((event: IdeTerminalOutputEvent) => {
+    state.store.push(IDE_TERMINAL_KEY, event.data)
   })
 }
 
@@ -133,11 +168,19 @@ export function subscribeToSessionOutput(
   options: { replay?: boolean } = {}
 ): () => void {
   ensureSessionBridge()
-  return store.subscribe(sessionId, listener, options.replay ?? true)
+  return state.store.subscribe(sessionId, listener, options.replay ?? true)
+}
+
+export function attachSessionOutput(
+  sessionId: string,
+  listener: OutputListener
+): { replayData: string; unsubscribe: () => void } {
+  ensureSessionBridge()
+  return state.store.connect(sessionId, listener)
 }
 
 export function clearSessionOutput(sessionId: string): void {
-  store.clear(sessionId)
+  state.store.clear(sessionId)
 }
 
 export function subscribeToIdeTerminalOutput(
@@ -145,11 +188,18 @@ export function subscribeToIdeTerminalOutput(
   options: { replay?: boolean } = {}
 ): () => void {
   ensureIdeBridge()
-  return store.subscribe(IDE_TERMINAL_KEY, listener, options.replay ?? true)
+  return state.store.subscribe(IDE_TERMINAL_KEY, listener, options.replay ?? true)
+}
+
+export function attachIdeTerminalOutput(
+  listener: OutputListener
+): { replayData: string; unsubscribe: () => void } {
+  ensureIdeBridge()
+  return state.store.connect(IDE_TERMINAL_KEY, listener)
 }
 
 export function clearIdeTerminalOutput(): void {
-  store.clear(IDE_TERMINAL_KEY)
+  state.store.clear(IDE_TERMINAL_KEY)
 }
 
 ensureSessionBridge()

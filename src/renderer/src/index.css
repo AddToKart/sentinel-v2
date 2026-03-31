@@ -285,6 +285,23 @@ textarea {
   animation: sentinel-sidebar-sheen 7.5s ease-in-out infinite;
 }
 
+.workspace-running-badge {
+  animation: sentinel-running-badge 1.85s ease-in-out infinite;
+}
+
+.workspace-running-dot {
+  animation: sentinel-running-dot 1.2s ease-in-out infinite;
+}
+
+.workspace-bell-ring {
+  animation: sentinel-bell-ring 900ms cubic-bezier(0.25, 0.9, 0.3, 1);
+  transform-origin: top center;
+}
+
+.workspace-notification-preview {
+  animation: sentinel-notification-preview 240ms ease-out both;
+}
+
 @keyframes sentinel-fade-in {
   from {
     opacity: 0;
@@ -347,5 +364,73 @@ textarea {
   100% {
     transform: translateX(140%);
     opacity: 0;
+  }
+}
+
+@keyframes sentinel-running-badge {
+  0%,
+  100% {
+    opacity: 0.68;
+    filter: saturate(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    filter: saturate(1.15);
+  }
+}
+
+@keyframes sentinel-running-dot {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sentinel-bell-ring {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  15% {
+    transform: rotate(18deg);
+  }
+
+  30% {
+    transform: rotate(-15deg);
+  }
+
+  45% {
+    transform: rotate(11deg);
+  }
+
+  60% {
+    transform: rotate(-7deg);
+  }
+
+  75% {
+    transform: rotate(4deg);
+  }
+
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes sentinel-notification-preview {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }

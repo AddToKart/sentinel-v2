@@ -1,37 +1,67 @@
 import type { CSSProperties } from 'react'
-import { GitBranch, PanelLeft, Plus, TerminalSquare } from 'lucide-react'
+import { GitBranch, LayoutGrid, PanelLeft, Plus, Sidebar as SidebarIcon, TerminalSquare } from 'lucide-react'
 
 import type { ProjectState, WorkspaceContext } from '@shared/types'
 
 import { WorkspaceSwitcher } from '../../components/WorkspaceSwitcher'
+import { WorkspaceNotifications } from './WorkspaceNotifications'
+import type { WorkspaceNotification } from '../hooks/useWorkspaceNotifications'
 import type { WorkspaceAction } from '../support'
 
 interface AppHeaderProps {
   activeWorkspaceId: string | null
+  bellRinging: boolean
   globalMode: 'ide' | 'multiplex'
   hasProject: boolean
+  notifications: WorkspaceNotification[]
+  previewNotification: WorkspaceNotification | null
   project: ProjectState
+  runningSessionCountsByWorkspace: Record<string, number>
+  sessionCountsByWorkspace: Record<string, number>
+  tabCountsByWorkspace: Record<string, number>
+  unreadNotificationCountsByWorkspace: Record<string, number>
+  unreadNotificationCount: number
   workspaces: WorkspaceContext[]
+  onClearNotifications: () => void
+  onClearPreviewNotification: () => void
   onCreateSession: () => void
   onCreateStandaloneTerminal: () => void
+  onDismissNotification: (notificationId: string) => void
+  onMarkAllNotificationsRead: () => void
   onOpenProject: () => void
   onSwitchWorkspace: (workspaceId: string) => void
   onToggleSidebar: () => void
   onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => void
+  layoutMode: 'grid' | 'master-stack'
+  onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
 }
 
 export function AppHeader({
   activeWorkspaceId,
+  bellRinging,
   globalMode,
   hasProject,
+  notifications,
+  previewNotification,
   project,
+  runningSessionCountsByWorkspace,
+  sessionCountsByWorkspace,
+  tabCountsByWorkspace,
+  unreadNotificationCountsByWorkspace,
+  unreadNotificationCount,
   workspaces,
+  onClearNotifications,
+  onClearPreviewNotification,
   onCreateSession,
   onCreateStandaloneTerminal,
+  onDismissNotification,
+  onMarkAllNotificationsRead,
   onOpenProject,
   onSwitchWorkspace,
   onToggleSidebar,
-  onWorkspaceAction
+  onWorkspaceAction,
+  layoutMode,
+  onSetLayoutMode
 }: AppHeaderProps): JSX.Element {
   return (
     <header
@@ -62,6 +92,10 @@ export function AppHeader({
             onCreateWorkspace={onOpenProject}
             onSwitchWorkspace={onSwitchWorkspace}
             onWorkspaceAction={onWorkspaceAction}
+            runningSessionCounts={runningSessionCountsByWorkspace}
+            sessionCounts={sessionCountsByWorkspace}
+            tabCounts={tabCountsByWorkspace}
+            unreadNotificationCounts={unreadNotificationCountsByWorkspace}
             workspaces={workspaces}
           />
         </div>
@@ -106,7 +140,45 @@ export function AppHeader({
         )}
       </div>
 
-      <div className="ml-auto w-[140px] shrink-0" />
+      <div
+        className="ml-auto flex shrink-0 items-center gap-2"
+        style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+      >
+        {activeWorkspaceId && (sessionCountsByWorkspace[activeWorkspaceId] ?? 0) >= 3 && (
+          <div className="mr-2 flex items-center gap-0.5 rounded-md border border-white/10 bg-black/40 p-0.5 shadow-sm">
+            <button
+              className={`rounded px-2 py-0.5 text-[10px] transition flex items-center gap-1.5 ${
+                layoutMode === 'grid' ? 'bg-sentinel-accent/15 text-sentinel-accent' : 'text-sentinel-mist hover:text-white hover:bg-white/5'
+              }`}
+              onClick={() => onSetLayoutMode('grid')}
+              title="Grid Layout"
+              type="button"
+            >
+              <LayoutGrid className="h-3 w-3" />
+            </button>
+            <button
+              className={`rounded px-2 py-0.5 text-[10px] transition flex items-center gap-1.5 ${
+                layoutMode === 'master-stack' ? 'bg-sentinel-accent/15 text-sentinel-accent' : 'text-sentinel-mist hover:text-white hover:bg-white/5'
+              }`}
+              onClick={() => onSetLayoutMode('master-stack')}
+              title="Master-Stack Layout"
+              type="button"
+            >
+              <SidebarIcon className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+        <WorkspaceNotifications
+          bellRinging={bellRinging}
+          notifications={notifications}
+          onClearNotifications={onClearNotifications}
+          onClearPreviewNotification={onClearPreviewNotification}
+          onDismissNotification={onDismissNotification}
+          onMarkAllRead={onMarkAllNotificationsRead}
+          previewNotification={previewNotification}
+          unreadCount={unreadNotificationCount}
+        />
+      </div>
     </header>
   )
 }

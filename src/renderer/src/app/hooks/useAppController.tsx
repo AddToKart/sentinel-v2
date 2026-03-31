@@ -6,6 +6,7 @@ import { IdeWorkspaceView } from '../components/IdeWorkspaceView'
 import { MultiplexWorkspaceView } from '../components/MultiplexWorkspaceView'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useSentinelBootstrap } from './useSentinelBootstrap'
+import { useWorkspaceNotifications } from './useWorkspaceNotifications'
 import {
   defaultIdeTerminalState,
   defaultSummary,
@@ -15,7 +16,7 @@ import {
   type WorkspaceAction
 } from '../support'
 import { getErrorMessage } from '../../error-utils'
-import { clearIdeTerminalOutput, clearSessionOutput } from '../../terminal-stream'
+import { clearIdeTerminalOutput } from '../../terminal-stream'
 import { clearTabOutput } from '../../tab-stream'
 import {
   buildWorkspaceOverlayFiles,
@@ -33,6 +34,7 @@ import type {
   SessionWorkspaceStrategy,
   TabSummary,
   WorkspaceContext,
+  WorkspaceMode,
   WorkspaceSummary
 } from '@shared/types'
 
@@ -61,14 +63,18 @@ export function useAppController() {
   const [tabs, setTabs] = useState<TabSummary[]>([])
   const [ideTabIds, setIdeTabIds] = useState<string[]>([])
   const [activeTabId, setActiveTabId] = useState<string>('dashboard')
+  const [layoutMode, setLayoutMode] = useState<'grid' | 'master-stack'>('master-stack')
   const [activeIdeTerminalId, setActiveIdeTerminalId] = useState<string>('ide-workspace')
   const [ideTerminalCollapsed, setIdeTerminalCollapsed] = useState(false)
   const [statusBarCollapsed, setStatusBarCollapsed] = useState(false)
+  const [bootstrapComplete, setBootstrapComplete] = useState(false)
+  const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | null>(null)
 
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null)
   const ideTerminalPanelRef = useRef<PanelImperativeHandle | null>(null)
   const shellViewportRef = useRef<HTMLDivElement | null>(null)
   const fitTimerRef = useRef<number | null>(null)
+  const fitFollowUpTimerRef = useRef<number | null>(null)
   const workspacesRef = useRef<WorkspaceContext[]>([])
 
   const bridgeAvailable = Boolean(getSentinelBridge())
@@ -80,16 +86,53 @@ export function useAppController() {
   const visibleTabs = activeWorkspaceId
     ? tabs.filter((tab) => tab.workspaceId === activeWorkspaceId)
     : []
+  const sessionCountsByWorkspace: Record<string, number> = {}
+  const tabCountsByWorkspace: Record<string, number> = {}
+
+  for (const session of sessions) {
+    sessionCountsByWorkspace[session.workspaceId] =
+      (sessionCountsByWorkspace[session.workspaceId] ?? 0) + 1
+  }
+  for (const tab of tabs) {
+    tabCountsByWorkspace[tab.workspaceId] =
+      (tabCountsByWorkspace[tab.workspaceId] ?? 0) + 1
+  }
+
+  const {
+    bellRinging,
+    clearNotifications,
+    clearPreviewNotification,
+    dismissNotification,
+    markAllRead,
+    notifications,
+    previewNotification,
+    runningSessionCountsByWorkspace,
+    unreadCount,
+    unreadCountsByWorkspace
+  } = useWorkspaceNotifications({
+    activeWorkspaceId,
+    activityLog,
+    bootstrapped: bootstrapComplete,
+    sessions,
+    workspaces
+  })
 
   function requestTerminalFit(delay = 140): void {
     if (fitTimerRef.current) {
       window.clearTimeout(fitTimerRef.current)
+    }
+    if (fitFollowUpTimerRef.current) {
+      window.clearTimeout(fitFollowUpTimerRef.current)
     }
 
     fitTimerRef.current = window.setTimeout(() => {
       fitTimerRef.current = null
       setFitNonce((value) => value + 1)
     }, delay)
+    fitFollowUpTimerRef.current = window.setTimeout(() => {
+      fitFollowUpTimerRef.current = null
+      setFitNonce((value) => value + 1)
+    }, delay + 240)
   }
 
   function requireSentinelBridge(): SentinelApi | null {
@@ -102,12 +145,30 @@ export function useAppController() {
     return sentinel
   }
 
+  function dropSessionLocally(sessionId: string): void {
+    setSessions((current) => current.filter((session) => session.id !== sessionId))
+    setSessionHistories((current) => {
+      const next = { ...current }
+      delete next[sessionId]
+      return next
+    })
+    setSessionDiffs((current) => {
+      const next = { ...current }
+      delete next[sessionId]
+      return next
+    })
+    if (maximizedSessionId === sessionId) {
+      setMaximizedSessionId(null)
+    }
+  }
+
   useEffect(() => {
     workspacesRef.current = workspaces
   }, [workspaces])
 
   useSentinelBootstrap({
     workspacesRef,
+    setBootstrapComplete,
     setActivityLog,
     setActiveWorkspaceId,
     setDefaultSessionStrategy,
@@ -140,12 +201,27 @@ export function useAppController() {
         window.clearTimeout(fitTimerRef.current)
         fitTimerRef.current = null
       }
+      if (fitFollowUpTimerRef.current) {
+        window.clearTimeout(fitFollowUpTimerRef.current)
+        fitFollowUpTimerRef.current = null
+      }
     }
   }, [])
 
   useEffect(() => {
     requestTerminalFit(120)
-  }, [sidebarCollapsed, consoleOpen, visibleSessions.length, maximizedSessionId, activeTabId])
+  }, [
+    activeIdeTerminalId,
+    activeTabId,
+    activeWorkspaceId,
+    consoleOpen,
+    globalMode,
+    ideTerminalCollapsed,
+    maximizedSessionId,
+    sidebarCollapsed,
+    visibleSessions.length,
+    visibleTabs.length
+  ])
 
   useEffect(() => {
     if (globalMode === 'ide') {
@@ -253,18 +329,37 @@ export function useAppController() {
     }
 
     try {
-      const previousProjectPath = project.path
-      const nextProject = await sentinel.selectProject()
-      if (nextProject.path !== previousProjectPath) {
-        clearIdeTerminalOutput()
+      const selectedPath = await sentinel.pickProjectDirectory()
+      if (!selectedPath) {
+        return
       }
-      setProject(nextProject)
-      setSelectedFile(null)
+
+      setPendingWorkspacePath(selectedPath)
     } catch (error) {
       const message = getErrorMessage(error)
       if (message !== 'Dialog cancelled') {
         setErrorMessage(`Failed to open project: ${message}`)
       }
+    }
+  }
+
+  async function handleConfirmWorkspaceMode(mode: WorkspaceMode): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel || !pendingWorkspacePath) {
+      return
+    }
+
+    try {
+      const previousProjectPath = project.path
+      const workspace = await sentinel.createWorkspace(pendingWorkspacePath, undefined, mode)
+      if (workspace.project.path !== previousProjectPath) {
+        clearIdeTerminalOutput()
+      }
+      setProject(workspace.project)
+      setSelectedFile(null)
+      setPendingWorkspacePath(null)
+    } catch (error) {
+      setErrorMessage(`Failed to create workspace: ${getErrorMessage(error)}`)
     }
   }
 
@@ -358,20 +453,68 @@ export function useAppController() {
 
     try {
       await sentinel.closeSession(sessionId)
-      clearSessionOutput(sessionId)
-      setSessions((current) => current.filter((session) => session.id !== sessionId))
-      setSessionHistories((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
-      setSessionDiffs((current) => {
-        const next = { ...current }
-        delete next[sessionId]
-        return next
-      })
     } catch (error) {
-      setErrorMessage(`Failed to close session: ${getErrorMessage(error)}`)
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to stop session: ${message}`)
+    }
+  }
+
+  async function handlePauseSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.pauseSession(sessionId)
+    } catch (error) {
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to pause session: ${message}`)
+    }
+  }
+
+  async function handleResumeSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.resumeSession(sessionId)
+    } catch (error) {
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to resume session: ${message}`)
+    }
+  }
+
+  async function handleDeleteSession(sessionId: string): Promise<void> {
+    const sentinel = requireSentinelBridge()
+    if (!sentinel) {
+      return
+    }
+
+    try {
+      await sentinel.deleteSession(sessionId)
+      dropSessionLocally(sessionId)
+    } catch (error) {
+      const message = getErrorMessage(error)
+      if (message.toLowerCase().includes('not found')) {
+        dropSessionLocally(sessionId)
+        return
+      }
+      setErrorMessage(`Failed to delete session: ${message}`)
     }
   }
 
@@ -491,12 +634,17 @@ export function useAppController() {
       hasProject={hasProject}
       histories={sessionHistories}
       maximizedSessionId={maximizedSessionId}
+      onDeleteSession={handleDeleteSession}
       onCloseSession={handleCloseSession}
       onOpenProject={() => { void handleOpenProject() }}
+      onPauseSession={handlePauseSession}
+      onResumeSession={handleResumeSession}
       onToggleMaximize={(id) => setMaximizedSessionId((current) => current === id ? null : id)}
       sessionDiffs={sessionDiffs}
       sessions={visibleSessions}
       windowsBuildNumber={windowsBuildNumber}
+      layoutMode={layoutMode}
+      onSetLayoutMode={setLayoutMode}
     />
   )
 
@@ -545,16 +693,30 @@ export function useAppController() {
     globalActions,
     headerProps: {
       activeWorkspaceId,
+      bellRinging,
       globalMode,
       hasProject,
+      notifications,
+      onClearNotifications: clearNotifications,
+      onClearPreviewNotification: clearPreviewNotification,
       onCreateSession: () => { void handleCreateSession() },
       onCreateStandaloneTerminal: () => { void handleCreateStandaloneTerminal() },
+      onDismissNotification: dismissNotification,
+      onMarkAllNotificationsRead: markAllRead,
       onOpenProject: () => { void handleOpenProject() },
       onSwitchWorkspace: (workspaceId: string) => { void handleSwitchWorkspace(workspaceId) },
       onToggleSidebar: toggleSidebar,
       onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => { void handleWorkspaceAction(workspaceId, action) },
+      previewNotification,
       project,
-      workspaces
+      runningSessionCountsByWorkspace,
+      sessionCountsByWorkspace,
+      tabCountsByWorkspace,
+      unreadNotificationCount: unreadCount,
+      unreadNotificationCountsByWorkspace: unreadCountsByWorkspace,
+      workspaces,
+      layoutMode,
+      onSetLayoutMode: setLayoutMode
     },
     workspacePanelsProps: {
       activeStandaloneTab,
@@ -596,8 +758,15 @@ export function useAppController() {
       windowsBuildNumber
     },
     clearErrorMessage: () => setErrorMessage(null),
+    workspaceModeDialogProps: {
+      candidatePath: pendingWorkspacePath,
+      open: pendingWorkspacePath !== null,
+      onClose: () => setPendingWorkspacePath(null),
+      onConfirm: (mode: WorkspaceMode) => { void handleConfirmWorkspaceMode(mode) }
+    },
     closeGlobalActionBar: () => setGlobalActionBarOpen(false),
     toggleConsole,
     toggleGlobalActionBar
   }
 }
+

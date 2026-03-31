@@ -16,6 +16,7 @@ import type {
 import { getErrorMessage } from '../../error-utils'
 import type { SelectedFileEntry } from '../../workspace-overlay'
 import {
+  emptyProject,
   getSentinelBridge,
   missingBridgeMessage,
   sortWorkspaces,
@@ -24,6 +25,7 @@ import {
 
 interface UseSentinelBootstrapOptions {
   workspacesRef: MutableRefObject<WorkspaceContext[]>
+  setBootstrapComplete: Dispatch<SetStateAction<boolean>>
   setActivityLog: Dispatch<SetStateAction<ActivityLogEntry[]>>
   setActiveWorkspaceId: Dispatch<SetStateAction<string | null>>
   setDefaultSessionStrategy: Dispatch<SetStateAction<SessionWorkspaceStrategy>>
@@ -43,6 +45,7 @@ interface UseSentinelBootstrapOptions {
 
 export function useSentinelBootstrap({
   workspacesRef,
+  setBootstrapComplete,
   setActivityLog,
   setActiveWorkspaceId,
   setDefaultSessionStrategy,
@@ -64,6 +67,7 @@ export function useSentinelBootstrap({
     const sentinel = getSentinelBridge()
 
     if (!sentinel) {
+      setBootstrapComplete(true)
       setErrorMessage(missingBridgeMessage())
       return
     }
@@ -101,11 +105,33 @@ export function useSentinelBootstrap({
         setMaximizedSessionId(null)
       }),
       sentinelBridge.onWorkspaceRemoved((payload) => {
+        const removedWorkspace = workspacesRef.current.find(
+          (workspace) => workspace.id === payload.workspaceId
+        )
+        const removedSessionIds = new Set(removedWorkspace?.sessionIds ?? [])
+
         setActiveWorkspaceId((current) =>
           current === payload.workspaceId ? null : current
         )
         setWorkspaces((current) =>
           current.filter((workspace) => workspace.id !== payload.workspaceId)
+        )
+        setSessions((current) =>
+          current.filter((session) => session.workspaceId !== payload.workspaceId)
+        )
+        setTabs((current) => current.filter((tab) => tab.workspaceId !== payload.workspaceId))
+        setSessionHistories((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([sessionId]) => !removedSessionIds.has(sessionId))
+          )
+        )
+        setSessionDiffs((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([sessionId]) => !removedSessionIds.has(sessionId))
+          )
+        )
+        setProject((current) =>
+          removedWorkspace ? emptyProject() : current
         )
       }),
       sentinelBridge.onSessionState((session) => {
@@ -116,16 +142,12 @@ export function useSentinelBootstrap({
           const index = current.findIndex((existing) => existing.id === session.id)
 
           if (index >= 0) {
-            if (session.status === 'closed') {
-              return current.filter((existing) => existing.id !== session.id)
-            }
-
             const next = [...current]
             next[index] = session
             return next
           }
 
-          if (session.status === 'closed' || !workspaceExists) {
+          if (!workspaceExists) {
             return current
           }
 
@@ -204,10 +226,14 @@ export function useSentinelBootstrap({
           return
         }
 
+        const workspaceIds = new Set(payload.workspaces.map((workspace) => workspace.id))
+        const sessions = payload.sessions.filter((session) => workspaceIds.has(session.workspaceId))
+        const tabs = payload.tabs.filter((tab) => workspaceIds.has(tab.workspaceId))
+
         setProject(payload.project)
         setWorkspaces(sortWorkspaces(payload.workspaces))
         setActiveWorkspaceId(payload.activeWorkspaceId ?? null)
-        setSessions(payload.sessions)
+        setSessions(sessions)
         setWorkspaceSummary(payload.summary)
         setActivityLog(payload.activityLog)
         setDefaultSessionStrategy(payload.preferences.defaultSessionStrategy)
@@ -216,17 +242,21 @@ export function useSentinelBootstrap({
 
         const histories: Record<string, SessionCommandEntry[]> = {}
         for (const update of payload.histories) {
-          histories[update.sessionId] = update.entries
+          if (workspaceIds.has(update.workspaceId)) {
+            histories[update.sessionId] = update.entries
+          }
         }
         setSessionHistories(histories)
 
         const diffs: Record<string, string[]> = {}
         for (const update of payload.diffs) {
-          diffs[update.sessionId] = update.modifiedPaths
+          if (workspaceIds.has(update.workspaceId)) {
+            diffs[update.sessionId] = update.modifiedPaths
+          }
         }
         setSessionDiffs(diffs)
 
-        const tabsWithMetrics = payload.tabs.map((tab) => {
+        const tabsWithMetrics = tabs.map((tab) => {
           const metrics = payload.tabMetrics.find((tabMetric) => tabMetric.tabId === tab.id)
           if (metrics) {
             return { ...tab, metrics: metrics.metrics, pid: metrics.pid ?? tab.pid }
@@ -235,8 +265,10 @@ export function useSentinelBootstrap({
           return tab
         })
         setTabs(tabsWithMetrics)
+        setBootstrapComplete(true)
       } catch (error) {
         if (!disposed) {
+          setBootstrapComplete(true)
           setErrorMessage(`Failed to initialize Sentinel: ${getErrorMessage(error)}`)
         }
       }
@@ -257,6 +289,7 @@ export function useSentinelBootstrap({
   }, [
     setActivityLog,
     setActiveWorkspaceId,
+    setBootstrapComplete,
     setDefaultSessionStrategy,
     setErrorMessage,
     setIdeTerminalState,
@@ -273,3 +306,4 @@ export function useSentinelBootstrap({
     workspacesRef
   ])
 }
+

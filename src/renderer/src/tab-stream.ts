@@ -10,11 +10,21 @@ interface OutputBuffer {
 
 interface OutputStore {
   clear: (key: string) => void
+  connect: (key: string, listener: OutputListener) => { replayData: string; unsubscribe: () => void }
   push: (key: string, data: string) => void
   subscribe: (key: string, listener: OutputListener, replay?: boolean) => () => void
 }
 
+interface TabStreamState {
+  store: OutputStore
+  unsubscribe: (() => void) | null
+}
+
 const MAX_BUFFER_LENGTH = 500_000
+
+declare global {
+  var __sentinelTabStreamState__: TabStreamState | undefined
+}
 
 function createOutputStore(): OutputStore {
   const buffers = new Map<string, OutputBuffer>()
@@ -47,6 +57,28 @@ function createOutputStore(): OutputStore {
       generations.set(key, currentGen + 1)
       buffers.delete(key)
       listeners.delete(key)
+    },
+    connect(key: string, listener: OutputListener) {
+      let scopedListeners = listeners.get(key)
+      if (!scopedListeners) {
+        scopedListeners = new Set()
+        listeners.set(key, scopedListeners)
+      }
+
+      scopedListeners.add(listener)
+      const replayData = buffers.get(key)?.chunks.join('') ?? ''
+
+      return {
+        replayData,
+        unsubscribe: () => {
+          const currentListeners = listeners.get(key)
+          if (!currentListeners) return
+          currentListeners.delete(listener)
+          if (currentListeners.size === 0) {
+            listeners.delete(key)
+          }
+        }
+      }
     },
     push(key: string, data: string) {
       const buffer = getBuffer(key)
@@ -101,17 +133,17 @@ function createOutputStore(): OutputStore {
   }
 }
 
-const store = createOutputStore()
-
-let tabBridgeStarted = false
+const state = globalThis.__sentinelTabStreamState__ ??= {
+  store: createOutputStore(),
+  unsubscribe: null
+}
 
 function ensureTabBridge(): void {
-  if (tabBridgeStarted) return
+  if (state.unsubscribe) return
   if (typeof window === 'undefined' || typeof window.sentinel === 'undefined') return
 
-  tabBridgeStarted = true
-  window.sentinel.onTabOutput((event: TabOutputEvent) => {
-    store.push(event.tabId, event.data)
+  state.unsubscribe = window.sentinel.onTabOutput((event: TabOutputEvent) => {
+    state.store.push(event.tabId, event.data)
   })
 }
 
@@ -121,11 +153,19 @@ export function subscribeToTabOutput(
   options: { replay?: boolean } = {}
 ): () => void {
   ensureTabBridge()
-  return store.subscribe(tabId, listener, options.replay ?? true)
+  return state.store.subscribe(tabId, listener, options.replay ?? true)
+}
+
+export function attachTabOutput(
+  tabId: string,
+  listener: OutputListener
+): { replayData: string; unsubscribe: () => void } {
+  ensureTabBridge()
+  return state.store.connect(tabId, listener)
 }
 
 export function clearTabOutput(tabId: string): void {
-  store.clear(tabId)
+  state.store.clear(tabId)
 }
 
 ensureTabBridge()

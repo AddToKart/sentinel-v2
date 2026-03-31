@@ -1,6 +1,8 @@
 import { AppHeader } from './app/components/AppHeader'
 import { AppWorkspacePanels } from './app/components/AppWorkspacePanels'
 import { BridgeUnavailableScreen } from './app/components/BridgeUnavailableScreen'
+import { ErrorToast } from './app/components/ErrorToast'
+import { WorkspaceModeDialog } from './app/components/WorkspaceModeDialog'
 import { useAppController } from './app/hooks/useAppController'
 import { ConsoleDrawer } from './components/ConsoleDrawer'
 import { GlobalActionBar } from './components/GlobalActionBar'
@@ -14,12 +16,10 @@ export default function App(): JSX.Element {
 
   return (
     <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-[#060a0f] text-white select-none">
-      {controller.errorMessage && (
-        <div className="shrink-0 bg-rose-500/10 px-4 py-2 text-sm text-rose-200 border-b border-rose-500/20">
-          {controller.errorMessage}
-          <button className="ml-3 underline opacity-70 hover:opacity-100" onClick={controller.clearErrorMessage}>dismiss</button>
-        </div>
-      )}
+      <ErrorToast
+        message={controller.errorMessage}
+        onDismiss={controller.clearErrorMessage}
+      />
 
       <AppHeader {...controller.headerProps} />
       <AppWorkspacePanels {...controller.workspacePanelsProps} />
@@ -41,6 +41,8 @@ export default function App(): JSX.Element {
         isOpen={controller.globalActionBarOpen}
         onClose={controller.closeGlobalActionBar}
       />
+      <WorkspaceModeDialog {...controller.workspaceModeDialogProps} />
     </div>
   )
 }
+

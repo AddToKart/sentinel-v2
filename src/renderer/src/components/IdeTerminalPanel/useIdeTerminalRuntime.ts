@@ -12,7 +12,7 @@ import {
   installTerminalMaintenance,
   refreshTerminalSurface
 } from '../../terminal-config'
-import { clearIdeTerminalOutput, subscribeToIdeTerminalOutput } from '../../terminal-stream'
+import { attachIdeTerminalOutput, clearIdeTerminalOutput } from '../../terminal-stream'
 import { createIdleState, describeState } from './helpers'
 
 interface UseIdeTerminalRuntimeOptions {
@@ -22,6 +22,9 @@ interface UseIdeTerminalRuntimeOptions {
   windowsBuildNumber?: number
   isVisible: boolean
 }
+
+const IDE_TERMINAL_GEOMETRY_CACHE_KEY = 'ide-terminal'
+const ideTerminalGeometryCache = new Map<string, { cols: number; rows: number }>()
 
 export function useIdeTerminalRuntime({
   fitNonce,
@@ -39,6 +42,7 @@ export function useIdeTerminalRuntime({
   const fitFrameRef = useRef<number | null>(null)
   const fitTimerRef = useRef<number | null>(null)
   const focusFrameRef = useRef<number | null>(null)
+  const rebuildTimerRef = useRef<number | null>(null)
   const recoveryTimerRef = useRef<number | null>(null)
   const lastGeometryRef = useRef({ width: 0, height: 0, cols: 0, rows: 0 })
   const lastProjectPathRef = useRef<string | undefined>(projectPath)
@@ -111,13 +115,17 @@ export function useIdeTerminalRuntime({
     const lastGeometry = lastGeometryRef.current
     const hostChanged = lastGeometry.width !== width || lastGeometry.height !== height
     const cellGeometryChanged = lastGeometry.cols !== cols || lastGeometry.rows !== rows
+    const cachedGeometry = ideTerminalGeometryCache.get(IDE_TERMINAL_GEOMETRY_CACHE_KEY)
+    const backendGeometryChanged =
+      cachedGeometry?.cols !== cols || cachedGeometry?.rows !== rows
 
     if (!hostChanged && !cellGeometryChanged) {
       return
     }
 
     lastGeometryRef.current = { width, height, cols, rows }
-    if (cellGeometryChanged) {
+    ideTerminalGeometryCache.set(IDE_TERMINAL_GEOMETRY_CACHE_KEY, { cols, rows })
+    if (cellGeometryChanged && backendGeometryChanged) {
       void window.sentinel.resizeIdeTerminal(cols, rows)
     }
   }
@@ -230,7 +238,13 @@ export function useIdeTerminalRuntime({
     terminal.open(terminalHostRef.current)
     configureTerminalDom(terminal)
 
-    const outputCleanup = subscribeToIdeTerminalOutput((data) => {
+    let primed = false
+    const pendingOutput: string[] = []
+    const { replayData, unsubscribe: outputCleanup } = attachIdeTerminalOutput((data) => {
+      if (!primed) {
+        pendingOutput.push(data)
+        return
+      }
       enqueueOutput(data)
     })
 
@@ -247,6 +261,29 @@ export function useIdeTerminalRuntime({
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    const flushBufferedOutput = () => {
+      const chunks: string[] = []
+      if (replayData) {
+        chunks.push(replayData)
+      }
+      if (pendingOutput.length > 0) {
+        chunks.push(pendingOutput.join(''))
+        pendingOutput.length = 0
+      }
+      primed = true
+      if (chunks.length > 0) {
+        enqueueOutput(chunks.join(''))
+      }
+    }
+
+    performTerminalFit()
+    requestAnimationFrame(() => {
+      performTerminalFit()
+      flushBufferedOutput()
+      scheduleTerminalFit(80)
+      focusTerminal()
+    })
 
     return () => {
       observer.disconnect()
@@ -268,6 +305,10 @@ export function useIdeTerminalRuntime({
       if (focusFrameRef.current !== null) {
         cancelAnimationFrame(focusFrameRef.current)
         focusFrameRef.current = null
+      }
+      if (rebuildTimerRef.current !== null) {
+        window.clearTimeout(rebuildTimerRef.current)
+        rebuildTimerRef.current = null
       }
       writeQueueRef.current = []
       writeInFlightRef.current = false
@@ -316,7 +357,7 @@ export function useIdeTerminalRuntime({
         refreshTerminalSurface(terminalRef.current)
       }
     })
-  }, [fitNonce])
+  }, [fitNonce, isVisible])
 
   useEffect(() => {
     if (recoveryTimerRef.current !== null) {

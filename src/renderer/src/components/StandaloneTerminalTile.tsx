@@ -7,7 +7,7 @@ import {
   createTerminalOptions,
   refreshTerminalSurface,
 } from '../terminal-config'
-import { subscribeToTabOutput } from '../tab-stream'
+import { attachTabOutput } from '../tab-stream'
 
 import type { TabSummary } from '@shared/types'
 
@@ -19,6 +19,8 @@ interface StandaloneTerminalTileProps {
   onFocus?: () => void
   hideMaximize?: boolean
 }
+
+const tabTerminalGeometryCache = new Map<string, { cols: number; rows: number }>()
 
 export function StandaloneTerminalTile({
   tab,
@@ -35,6 +37,7 @@ export function StandaloneTerminalTile({
   const writeFrameRef = useRef<number | null>(null)
   const writeInFlightRef = useRef(false)
   const isDisposedRef = useRef(false)
+  const rebuildTimerRef = useRef<number | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
 
   // Process write queue — batch all pending chunks into a single write to avoid
@@ -84,7 +87,11 @@ export function StandaloneTerminalTile({
       fitAddon.fit()
       const dims = fitAddon.proposeDimensions()
       if (dims && dims.cols > 0 && dims.rows > 0) {
-        if (terminal.cols !== dims.cols || terminal.rows !== dims.rows) {
+        const cachedGeometry = tabTerminalGeometryCache.get(tab.id)
+        const backendGeometryChanged =
+          cachedGeometry?.cols !== dims.cols || cachedGeometry?.rows !== dims.rows
+        tabTerminalGeometryCache.set(tab.id, { cols: dims.cols, rows: dims.rows })
+        if (backendGeometryChanged) {
           window.sentinel.resizeTab(tab.id, dims.cols, dims.rows)
         }
       }
@@ -124,18 +131,33 @@ export function StandaloneTerminalTile({
     terminal.loadAddon(fitAddon)
     terminal.open(terminalHostRef.current)
 
-    // Configure terminal DOM
+    // Configure terminal DOM — move the hidden textarea completely off-screen
+    // (matching SessionTile / useIdeTerminalRuntime) so it doesn't affect layout.
     const textarea = terminal.textarea
     if (textarea) {
-      textarea.setAttribute('aria-label', `Terminal ${tab.label}`)
-      textarea.setAttribute('spellcheck', 'false')
-      textarea.style.position = 'absolute'
+      textarea.spellcheck = false
+      textarea.autocapitalize = 'off'
+      textarea.autocomplete = 'off'
+      textarea.setAttribute('autocorrect', 'off')
+      textarea.setAttribute('aria-hidden', 'true')
+      textarea.style.pointerEvents = 'none'
+      textarea.style.position = 'fixed'
+      textarea.style.left = '-99999px'
+      textarea.style.top = '0'
+      textarea.style.width = '1px'
+      textarea.style.height = '1px'
       textarea.style.opacity = '0'
     }
 
     // Subscribe to output
-    const unsubscribe = subscribeToTabOutput(tab.id, (data: string) => {
+    let primed = false
+    const pendingOutput: string[] = []
+    const { replayData, unsubscribe } = attachTabOutput(tab.id, (data: string) => {
       if (isDisposedRef.current) return
+      if (!primed) {
+        pendingOutput.push(data)
+        return
+      }
       writeQueueRef.current.push(data)
       scheduleWriteFlush()
     })
@@ -147,12 +169,30 @@ export function StandaloneTerminalTile({
     })
 
     terminalRef.current = terminal
+    fitTerminal()
+
+    const flushBufferedOutput = () => {
+      const chunks: string[] = []
+      if (replayData) {
+        chunks.push(replayData)
+      }
+      if (pendingOutput.length > 0) {
+        chunks.push(pendingOutput.join(''))
+        pendingOutput.length = 0
+      }
+      primed = true
+      if (chunks.length > 0) {
+        writeQueueRef.current.push(chunks.join(''))
+        scheduleWriteFlush()
+      }
+    }
 
     // Initial fit
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       fitTerminal()
+      flushBufferedOutput()
       focusTerminal()
-    }, 50)
+    })
 
     return () => {
       // Set disposal flag FIRST to stop any incoming data
@@ -165,6 +205,10 @@ export function StandaloneTerminalTile({
       if (writeFrameRef.current !== null) {
         cancelAnimationFrame(writeFrameRef.current)
         writeFrameRef.current = null
+      }
+      if (rebuildTimerRef.current !== null) {
+        window.clearTimeout(rebuildTimerRef.current)
+        rebuildTimerRef.current = null
       }
 
       // Drain the write queue and reset in-flight flag before dispose
