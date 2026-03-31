@@ -1,0 +1,521 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionStatus {
+    Starting,
+    Ready,
+    Closing,
+    Paused,
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CleanupState {
+    Active,
+    Removed,
+    Preserved,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionWorkspaceStrategy {
+    SandboxCopy,
+    GitWorktree,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkspaceMode {
+    Local,
+    Cloud,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum IdeStatus {
+    Idle,
+    Starting,
+    Ready,
+    Closing,
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabType {
+    Dashboard,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabStatus {
+    Starting,
+    Ready,
+    Closing,
+    Closed,
+    Error,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessMetrics {
+    pub cpu_percent: f64,
+    pub memory_mb: f64,
+    pub thread_count: u32,
+    pub handle_count: u32,
+    pub process_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMetricsUpdate {
+    pub session_id: String,
+    pub workspace_id: String,
+    pub pid: Option<u32>,
+    pub process_ids: Vec<u32>,
+    pub metrics: ProcessMetrics,
+    pub sampled_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectNode {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<ProjectNode>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub is_git_repo: bool,
+    pub tree: Vec<ProjectNode>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub label: String,
+    pub project_root: String,
+    pub cwd: String,
+    pub workspace_path: String,
+    pub workspace_strategy: SessionWorkspaceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    pub status: SessionStatus,
+    pub cleanup_state: CleanupState,
+    pub shell: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub metrics: ProcessMetrics,
+    pub mode: WorkspaceMode,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSummary {
+    pub active_sessions: usize,
+    pub active_workspace_session_count: usize,
+    pub active_workspace_tab_count: usize,
+    pub workspace_count: usize,
+    pub total_sessions: usize,
+    pub total_tabs: usize,
+    pub total_cpu_percent: f64,
+    pub total_memory_mb: f64,
+    pub total_processes: u32,
+    pub last_updated: i64,
+    pub default_session_strategy: SessionWorkspaceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityLogEntry {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    pub timestamp: i64,
+    pub scope: String,
+    pub status: String,
+    pub command: String,
+    pub cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandHistoryEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub workspace_id: String,
+    pub command: String,
+    pub timestamp: i64,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChangeEntry {
+    pub id: i64,
+    pub session_id: String,
+    pub workspace_id: String,
+    pub file_path: String,
+    pub change_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_hash: Option<String>,
+    pub timestamp: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogEntry {
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    pub timestamp: i64,
+    pub action_type: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceAnalytics {
+    pub workspace_id: String,
+    pub total_sessions: i64,
+    pub active_sessions: i64,
+    pub total_tabs: i64,
+    pub active_tabs: i64,
+    pub total_commands: i64,
+    pub total_file_changes: i64,
+    pub unique_files_changed: i64,
+    pub total_activity_entries: i64,
+    pub total_snapshots: i64,
+    pub average_session_cpu_percent: f64,
+    pub average_session_memory_mb: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_activity_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_snapshot_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub file_count: i64,
+    pub session_count: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCommandEntry {
+    pub id: String,
+    pub command: String,
+    pub timestamp: i64,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryUpdate {
+    pub session_id: String,
+    pub workspace_id: String,
+    pub entries: Vec<SessionCommandEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDiffUpdate {
+    pub session_id: String,
+    pub workspace_id: String,
+    pub modified_paths: Vec<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSyncConflict {
+    pub path: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionApplyResult {
+    pub session_id: String,
+    pub workspace_strategy: SessionWorkspaceStrategy,
+    pub applied_paths: Vec<String>,
+    pub remaining_paths: Vec<String>,
+    pub conflicts: Vec<SessionSyncConflict>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCommitResult {
+    pub session_id: String,
+    pub workspace_strategy: SessionWorkspaceStrategy,
+    pub applied_paths: Vec<String>,
+    pub committed_paths: Vec<String>,
+    pub remaining_paths: Vec<String>,
+    pub conflicts: Vec<SessionSyncConflict>,
+    pub created_commit: bool,
+    pub commit_message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePreferences {
+    pub default_session_strategy: SessionWorkspaceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceContext {
+    pub id: String,
+    pub name: String,
+    pub project: ProjectState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+    pub session_ids: Vec<String>,
+    pub tab_ids: Vec<String>,
+    pub created_at: i64,
+    pub last_active_at: i64,
+    pub default_session_strategy: SessionWorkspaceStrategy,
+    pub mode: WorkspaceMode,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemovedEvent {
+    pub workspace_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeTerminalState {
+    pub status: IdeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    pub shell: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub modified_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudConfig {
+    pub url: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapPayload {
+    pub project: ProjectState,
+    pub workspaces: Vec<WorkspaceContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
+    pub sessions: Vec<SessionSummary>,
+    pub tabs: Vec<TabSummary>,
+    pub summary: WorkspaceSummary,
+    pub activity_log: Vec<ActivityLogEntry>,
+    pub metrics: Vec<SessionMetricsUpdate>,
+    pub tab_metrics: Vec<TabMetricsUpdate>,
+    pub histories: Vec<SessionHistoryUpdate>,
+    pub diffs: Vec<SessionDiffUpdate>,
+    pub preferences: WorkspacePreferences,
+    pub ide_terminal: IdeTerminalState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub windows_build_number: Option<u32>,
+    pub cloud_config: CloudConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSessionInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cols: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_strategy: Option<SessionWorkspaceStrategy>,
+}
+
+impl IdeTerminalState {
+    pub fn idle() -> Self {
+        Self {
+            status: IdeStatus::Idle,
+            cwd: None,
+            workspace_path: None,
+            shell: "powershell.exe".to_string(),
+            pid: None,
+            created_at: None,
+            exit_code: None,
+            error: None,
+            modified_paths: Vec::new(),
+        }
+    }
+}
+
+impl Default for WorkspacePreferences {
+    fn default() -> Self {
+        Self {
+            default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
+            last_workspace_id: None,
+            cloud_token: Some("sentinel-secure-key-2026-abc-123".to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub tab_type: TabType,
+    pub label: String,
+    pub status: TabStatus,
+    pub cwd: String,
+    pub shell: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub metrics: ProcessMetrics,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabMetricsUpdate {
+    pub tab_id: String,
+    pub workspace_id: String,
+    pub pid: Option<u32>,
+    pub process_ids: Vec<u32>,
+    pub metrics: ProcessMetrics,
+    pub sampled_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabOutputEvent {
+    pub tab_id: String,
+    pub data: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabStateUpdate {
+    pub tab_id: String,
+    pub workspace_id: String,
+    pub status: TabStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl Default for WorkspaceSummary {
+    fn default() -> Self {
+        Self {
+            active_sessions: 0,
+            active_workspace_session_count: 0,
+            active_workspace_tab_count: 0,
+            workspace_count: 0,
+            total_sessions: 0,
+            total_tabs: 0,
+            total_cpu_percent: 0.0,
+            total_memory_mb: 0.0,
+            total_processes: 0,
+            last_updated: 0,
+            default_session_strategy: SessionWorkspaceStrategy::SandboxCopy,
+            active_workspace_id: None,
+            active_workspace_name: None,
+            project_path: None,
+            project_name: None,
+            branch: None,
+        }
+    }
+}
