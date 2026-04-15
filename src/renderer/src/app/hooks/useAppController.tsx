@@ -4,6 +4,7 @@ import type { PanelImperativeHandle } from 'react-resizable-panels'
 
 import { IdeWorkspaceView } from '../components/IdeWorkspaceView'
 import { MultiplexWorkspaceView } from '../components/MultiplexWorkspaceView'
+import { useChangesManager } from './useChangesManager'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useSentinelBootstrap } from './useSentinelBootstrap'
 import { useWorkspaceNotifications } from './useWorkspaceNotifications'
@@ -97,6 +98,21 @@ export function useAppController() {
     tabCountsByWorkspace[tab.workspaceId] =
       (tabCountsByWorkspace[tab.workspaceId] ?? 0) + 1
   }
+
+  const {
+    isOpen: changesManagerOpen,
+    isLoading: changesManagerLoading,
+    changesState,
+    selectedFile: selectedChangeFile,
+    togglePanel: toggleChangesManager,
+    closePanel: closeChangesManager,
+    selectFile: selectChangeFile,
+    pushAll: pushAllChanges,
+    pushAgentChanges: pushAgentChanges,
+    discardAll: discardAllChanges,
+    discardAgentChanges: discardAgentChanges,
+    resolveConflict: resolveFileConflict
+  } = useChangesManager(activeWorkspaceId)
 
   const {
     bellRinging,
@@ -310,7 +326,8 @@ export function useAppController() {
   useKeyboardShortcuts({
     onToggleConsole: toggleConsole,
     onToggleGlobalActionBar: toggleGlobalActionBar,
-    onToggleIdeTerminal: toggleIdeTerminal
+    onToggleIdeTerminal: toggleIdeTerminal,
+    onToggleChangesManager: toggleChangesManager
   })
 
   function toggleSidebar(): void {
@@ -672,6 +689,9 @@ export function useAppController() {
     />
   )
 
+  const changesCount = changesState?.pendingPushCount ?? 0
+  const hasConflicts = (changesState?.conflictCount ?? 0) > 0
+
   const globalActions = [
     { id: 'new-agent', label: 'New Agent', icon: <Plus className="h-4 w-4" />, execute: () => void handleCreateSession() },
     { id: 'open-project', label: 'Open Repository', icon: <FolderOpen className="h-4 w-4" />, execute: () => void handleOpenProject() },
@@ -706,6 +726,7 @@ export function useAppController() {
       onOpenProject: () => { void handleOpenProject() },
       onSwitchWorkspace: (workspaceId: string) => { void handleSwitchWorkspace(workspaceId) },
       onToggleSidebar: toggleSidebar,
+      onToggleChangesManager: toggleChangesManager,
       onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => { void handleWorkspaceAction(workspaceId, action) },
       previewNotification,
       project,
@@ -716,7 +737,9 @@ export function useAppController() {
       unreadNotificationCountsByWorkspace: unreadCountsByWorkspace,
       workspaces,
       layoutMode,
-      onSetLayoutMode: setLayoutMode
+      onSetLayoutMode: setLayoutMode,
+      changesCount,
+      hasConflicts
     },
     workspacePanelsProps: {
       activeStandaloneTab,
@@ -766,7 +789,35 @@ export function useAppController() {
     },
     closeGlobalActionBar: () => setGlobalActionBarOpen(false),
     toggleConsole,
-    toggleGlobalActionBar
+    toggleGlobalActionBar,
+    changesManagerProps: {
+      isOpen: changesManagerOpen,
+      isLoading: changesManagerLoading,
+      agentChanges: changesState ? (() => {
+        const grouped: Record<string, import('@shared/types').AgentFileChange[]> = {}
+        for (const change of changesState.agentChanges) {
+          if (change.unifiedStatus === 'pending') {
+            if (!grouped[change.agentId]) grouped[change.agentId] = []
+            grouped[change.agentId].push(change)
+          }
+        }
+        return grouped
+      })() : {},
+      agentLabels: {} as Record<string, string>,
+      agentCliTools: {} as Record<string, string>,
+      unifiedEntries: changesState?.unifiedEntries ?? [],
+      conflictCount: changesState?.conflictCount ?? 0,
+      pendingPushCount: changesState?.pendingPushCount ?? 0,
+      selectedFile: selectedChangeFile,
+      onToggle: toggleChangesManager,
+      onClose: closeChangesManager,
+      onFileClick: selectChangeFile,
+      onPushAll: pushAllChanges,
+      onPushAgent: pushAgentChanges,
+      onDiscardAll: discardAllChanges,
+      onDiscardAgent: discardAgentChanges,
+      onResolveConflict: resolveFileConflict
+    }
   }
 }
 

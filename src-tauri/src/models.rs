@@ -519,3 +519,46 @@ impl Default for WorkspaceSummary {
         }
     }
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFileChange {
+    pub id: String,
+    pub workspace_id: String,
+    pub agent_id: String,
+    pub sandbox_id: String,
+    pub file_path: String,
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_content: Option<String>,
+    pub additions: i64,
+    pub deletions: i64,
+    pub timestamp: i64,
+    pub unified_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<i64>,
+    pub is_binary: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiedSandboxEntry {
+    pub id: String,
+    pub workspace_id: String,
+    pub file_path: String,
+    pub source_agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_agent_ids: Option<Vec<String>>,
+    pub status: String,
+    pub last_updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangesManagerState {
+    pub agent_changes: Vec<AgentFileChange>,
+    pub unified_entries: Vec<UnifiedSandboxEntry>,
+    pub total_changed_files: usize,
+    pub conflict_count: usize,
+    pub pending_push_count: usize,
+}

@@ -161,3 +161,31 @@ pub struct WorkspaceSnapshotRow {
     pub file_count: i64,
     pub session_count: i64,
 }
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AgentFileChangeRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub agent_id: String,
+    pub sandbox_id: String,
+    pub file_path: String,
+    pub operation: String,
+    pub diff_content: Option<String>,
+    pub additions: i64,
+    pub deletions: i64,
+    pub timestamp: i64,
+    pub unified_status: String,
+    pub file_size: Option<i64>,
+    pub is_binary: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UnifiedSandboxStateRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub file_path: String,
+    pub source_agent_id: String,
+    pub conflict_agent_ids: Option<String>,
+    pub status: String,
+    pub last_updated_at: i64,
+}

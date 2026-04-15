@@ -6,6 +6,8 @@ import { CloudClient } from './cloud-client'
 
 import type {
   ActivityLogEntry,
+  ChangesManagerState,
+  ChangesUpdatedEvent,
   CommandHistoryEntry,
   BootstrapPayload,
   CreateSessionInput,
@@ -23,6 +25,7 @@ import type {
   SessionOutputEvent,
   SessionSummary,
   SessionWorkspaceStrategy,
+  UnifiedSandboxUpdatedEvent,
   WorkspaceAnalytics,
   TabMetricsUpdate,
   TabOutputEvent,
@@ -633,6 +636,34 @@ const api: SentinelApi = {
 
   listWorkspaceSnapshots(workspaceId: string) {
     return invokeCommand<SnapshotSummary[]>('list_workspace_snapshots', { workspaceId })
+  },
+
+  getChangesManagerState(workspaceId: string) {
+    return invokeCommand<ChangesManagerState>('get_changes_manager_state', { workspaceId })
+  },
+
+  scanAgentChanges(workspaceId: string, agentId: string) {
+    return invokeCommand<void>('scan_agent_changes', { workspaceId, agentId })
+  },
+
+  pushUnifiedSandbox(workspaceId: string) {
+    return invokeCommand<string[]>('push_unified_sandbox', { workspaceId })
+  },
+
+  discardChanges(workspaceId: string, agentId?: string) {
+    return invokeCommand<void>('discard_changes', { workspaceId, agentId })
+  },
+
+  resolveFileConflict(workspaceId: string, filePath: string, winningAgentId: string) {
+    return invokeCommand<void>('resolve_file_conflict', { workspaceId, filePath, winningAgentId })
+  },
+
+  onChangesUpdated(listener: (payload: ChangesUpdatedEvent) => void) {
+    return subscribe<ChangesUpdatedEvent>('sentinel:changes-updated', listener)
+  },
+
+  onUnifiedSandboxUpdated(listener: (payload: UnifiedSandboxUpdatedEvent) => void) {
+    return subscribe<UnifiedSandboxUpdatedEvent>('sentinel:unified-sandbox-updated', listener)
   },
 
   onTabOutput(listener: (event: TabOutputEvent) => void) {

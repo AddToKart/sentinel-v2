@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Agents/AI
+AGENTS.md
+GEMINI.md

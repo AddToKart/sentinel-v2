@@ -4,6 +4,7 @@ import { GitBranch, LayoutGrid, PanelLeft, Plus, Sidebar as SidebarIcon, Termina
 import type { ProjectState, WorkspaceContext } from '@shared/types'
 
 import { WorkspaceSwitcher } from '../../components/WorkspaceSwitcher'
+import { ChangesToggleButton } from '../../components/changes-manager/ChangesToggleButton'
 import { WorkspaceNotifications } from './WorkspaceNotifications'
 import type { WorkspaceNotification } from '../hooks/useWorkspaceNotifications'
 import type { WorkspaceAction } from '../support'
@@ -31,9 +32,12 @@ interface AppHeaderProps {
   onOpenProject: () => void
   onSwitchWorkspace: (workspaceId: string) => void
   onToggleSidebar: () => void
+  onToggleChangesManager: () => void
   onWorkspaceAction: (workspaceId: string, action: WorkspaceAction) => void
   layoutMode: 'grid' | 'master-stack'
   onSetLayoutMode: (mode: 'grid' | 'master-stack') => void
+  changesCount: number
+  hasConflicts: boolean
 }
 
 export function AppHeader({
@@ -59,9 +63,12 @@ export function AppHeader({
   onOpenProject,
   onSwitchWorkspace,
   onToggleSidebar,
+  onToggleChangesManager,
   onWorkspaceAction,
   layoutMode,
-  onSetLayoutMode
+  onSetLayoutMode,
+  changesCount,
+  hasConflicts
 }: AppHeaderProps): JSX.Element {
   return (
     <header
@@ -177,6 +184,11 @@ export function AppHeader({
           onMarkAllRead={onMarkAllNotificationsRead}
           previewNotification={previewNotification}
           unreadCount={unreadNotificationCount}
+        />
+        <ChangesToggleButton
+          onChangeCount={changesCount}
+          hasConflicts={hasConflicts}
+          onClick={onToggleChangesManager}
         />
       </div>
     </header>

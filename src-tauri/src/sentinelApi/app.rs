@@ -16,20 +16,20 @@ impl SentinelManager {
                 activity_log: Vec::new(),
                 windows_build_number: parse_windows_build_number(),
             }),
+            changes_manager: Arc::new(ChangesManager::new()),
         }
     }
 
     pub fn start_refresh_loop(self: &Arc<Self>, app: AppHandle) {
         let manager = self.clone();
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_millis(METRIC_INTERVAL_MS));
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    manager.refresh_runtime_state(&app);
-                })).unwrap_or_else(|e| {
-                    eprintln!("[sentinel] Panic in refresh loop: {:?}", e);
-                });
-            }
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(METRIC_INTERVAL_MS));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                manager.refresh_runtime_state(&app);
+            }))
+            .unwrap_or_else(|e| {
+                eprintln!("[sentinel] Panic in refresh loop: {:?}", e);
+            });
         });
     }
 
@@ -154,23 +154,24 @@ impl SentinelManager {
             .collect::<HashMap<_, _>>();
 
         let pool = database_pool(app);
-        let session_rows =
-            tauri::async_runtime::block_on(crate::database::repositories::SessionRepository::find_all(
-                &pool,
-            ))
-            .map_err(|error| format!("Failed to load persisted sessions: {error}"))?;
-        let tab_rows =
-            tauri::async_runtime::block_on(crate::database::repositories::TabRepository::find_all(
-                &pool,
-            ))
-            .map_err(|error| format!("Failed to load persisted tabs: {error}"))?;
+        let session_rows = tauri::async_runtime::block_on(
+            crate::database::repositories::SessionRepository::find_all(&pool),
+        )
+        .map_err(|error| format!("Failed to load persisted sessions: {error}"))?;
+        let tab_rows = tauri::async_runtime::block_on(
+            crate::database::repositories::TabRepository::find_all(&pool),
+        )
+        .map_err(|error| format!("Failed to load persisted tabs: {error}"))?;
 
         let mut sessions_by_id = HashMap::<String, SessionSummary>::new();
         let mut metrics_by_id = HashMap::<String, SessionMetricsUpdate>::new();
         let mut histories_by_id = HashMap::<String, SessionHistoryUpdate>::new();
         let mut diffs_by_id = HashMap::<String, SessionDiffUpdate>::new();
 
-        for row in session_rows.into_iter().filter(|row| workspace_ids.contains(&row.workspace_id)) {
+        for row in session_rows
+            .into_iter()
+            .filter(|row| workspace_ids.contains(&row.workspace_id))
+        {
             let workspace_mode = workspace_modes
                 .get(&row.workspace_id)
                 .copied()
@@ -186,7 +187,9 @@ impl SentinelManager {
                 ),
             )
             .map_err(|error| {
-                format!("Failed to load persisted command history for session {session_id}: {error}")
+                format!(
+                    "Failed to load persisted command history for session {session_id}: {error}"
+                )
             })?;
             let file_change_rows = tauri::async_runtime::block_on(
                 crate::database::repositories::FileChangeRepository::find_by_session(
@@ -240,7 +243,10 @@ impl SentinelManager {
 
         let mut tabs_by_id = HashMap::<String, TabSummary>::new();
         let mut tab_metrics_by_id = HashMap::<String, TabMetricsUpdate>::new();
-        for row in tab_rows.into_iter().filter(|row| workspace_ids.contains(&row.workspace_id)) {
+        for row in tab_rows
+            .into_iter()
+            .filter(|row| workspace_ids.contains(&row.workspace_id))
+        {
             let summary = tab_summary_from_row(row);
             if matches!(summary.status, TabStatus::Closed | TabStatus::Error) {
                 continue;
@@ -294,7 +300,10 @@ impl SentinelManager {
             .map_err(|error| format!("Failed to load IDE terminal state: {error}"))?
             .map(ide_state_from_row)
             .and_then(|state| {
-                if matches!(state.status, IdeStatus::Ready | IdeStatus::Starting | IdeStatus::Closing) {
+                if matches!(
+                    state.status,
+                    IdeStatus::Ready | IdeStatus::Starting | IdeStatus::Closing
+                ) {
                     Some(state)
                 } else {
                     None
@@ -385,20 +394,25 @@ impl SentinelManager {
         app: &AppHandle,
         candidate_path: String,
     ) -> Result<ProjectState, String> {
-        Ok(self.create_workspace(app, candidate_path, None, Some(WorkspaceMode::Local))?.project)
+        Ok(self
+            .create_workspace(app, candidate_path, None, Some(WorkspaceMode::Local))?
+            .project)
     }
 
     pub fn refresh_project(&self, app: &AppHandle) -> Result<ProjectState, String> {
         let (active_workspace_id, project_path) = {
             let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            (inner.active_workspace_id.clone(), inner.project.path.clone())
+            (
+                inner.active_workspace_id.clone(),
+                inner.project.path.clone(),
+            )
         };
 
         match project_path {
             Some(path) => {
                 let next_project = inspect_project(Path::new(&path))?;
-                let active_workspace_id = active_workspace_id
-                    .ok_or_else(|| "Workspace not found.".to_string())?;
+                let active_workspace_id =
+                    active_workspace_id.ok_or_else(|| "Workspace not found.".to_string())?;
 
                 let workspace = {
                     let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());

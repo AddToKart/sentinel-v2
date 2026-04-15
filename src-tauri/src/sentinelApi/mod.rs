@@ -1,12 +1,14 @@
+use crate::database::db_models::AgentFileChangeRow;
+use crate::database::repositories::{AgentFileChangeRepository, UnifiedSandboxRepository};
 use crate::models::{
-    ActivityLogEntry, AuditLogEntry, BootstrapPayload, CleanupState, CloudConfig, CommandHistoryEntry,
-    CreateSessionInput, FileChangeEntry, IdeStatus, IdeTerminalState, ProcessMetrics, ProjectNode,
-    ProjectState, SessionApplyResult, SessionCommandEntry, SessionCommitResult, SessionDiffUpdate,
-    SessionHistoryUpdate, SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
+    ActivityLogEntry, AgentFileChange, AuditLogEntry, BootstrapPayload, ChangesManagerState,
+    CleanupState, CloudConfig, CommandHistoryEntry, CreateSessionInput, FileChangeEntry, IdeStatus,
+    IdeTerminalState, ProcessMetrics, ProjectNode, ProjectState, SessionApplyResult,
+    SessionCommandEntry, SessionCommitResult, SessionDiffUpdate, SessionHistoryUpdate,
+    SessionMetricsUpdate, SessionStatus, SessionSummary, SessionSyncConflict,
     SessionWorkspaceStrategy, SnapshotSummary, TabMetricsUpdate, TabOutputEvent, TabStateUpdate,
-    TabStatus, TabSummary, TabType, WorkspaceAnalytics, WorkspaceContext, WorkspaceMode,
-    WorkspacePreferences,
-    WorkspaceRemovedEvent, WorkspaceSummary,
+    TabStatus, TabSummary, TabType, UnifiedSandboxEntry, WorkspaceAnalytics, WorkspaceContext,
+    WorkspaceMode, WorkspacePreferences, WorkspaceRemovedEvent, WorkspaceSummary,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -143,7 +145,7 @@ struct IdeRuntime {
     sandbox_state: Option<SandboxWorkspaceState>,
 }
 
-struct SentinelState {
+pub(crate) struct SentinelState {
     sessions: HashMap<String, SessionRecord>,
     tabs: HashMap<String, TabRecord>,
     ide: IdeRuntime,
@@ -157,7 +159,8 @@ struct SentinelState {
 }
 
 pub struct SentinelManager {
-    inner: Mutex<SentinelState>,
+    pub inner: Mutex<SentinelState>,
+    pub changes_manager: Arc<ChangesManager>,
 }
 
 #[derive(Deserialize)]
@@ -271,3 +274,4 @@ include!("workspace.rs");
 include!("terminals.rs");
 include!("tabs.rs");
 include!("runtime.rs");
+include!("changes_manager.rs");

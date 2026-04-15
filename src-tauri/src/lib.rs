@@ -10,7 +10,7 @@ use models::{
     BootstrapPayload, CommandHistoryEntry, CreateSessionInput, FileChangeEntry, IdeTerminalState,
     ProjectState, SessionApplyResult, SessionCommitResult, SessionSummary,
     SessionWorkspaceStrategy, SnapshotSummary, TabSummary, WorkspaceAnalytics, WorkspaceContext,
-    WorkspaceMode, WorkspacePreferences,
+    WorkspaceMode, WorkspacePreferences, ChangesManagerState,
 };
 use sentinel::SentinelManager;
 use tauri::{AppHandle, Manager, RunEvent, State};
@@ -455,6 +455,56 @@ fn list_workspace_snapshots(
     state.list_workspace_snapshots(&app, &workspace_id)
 }
 
+#[tauri::command]
+fn get_changes_manager_state(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<ChangesManagerState, String> {
+    state.changes_manager.get_changes_state(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn scan_agent_changes(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    agent_id: String,
+) -> Result<(), String> {
+    state.changes_manager.scan_sandbox_changes(&app, &workspace_id, &agent_id)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn push_unified_sandbox(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+) -> Result<Vec<String>, String> {
+    state.push_unified_sandbox(&app, &workspace_id)
+}
+
+#[tauri::command]
+fn discard_changes(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    agent_id: Option<String>,
+) -> Result<(), String> {
+    state.changes_manager.discard_changes(&app, &workspace_id, agent_id.as_deref())
+}
+
+#[tauri::command]
+fn resolve_file_conflict(
+    app: AppHandle,
+    state: State<'_, Arc<SentinelManager>>,
+    workspace_id: String,
+    file_path: String,
+    winning_agent_id: String,
+) -> Result<(), String> {
+    state.changes_manager.resolve_conflict(&app, &workspace_id, &file_path, &winning_agent_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(SentinelManager::new());
@@ -526,7 +576,12 @@ pub fn run() {
             export_audit_log,
             create_workspace_snapshot,
             restore_workspace_snapshot,
-            list_workspace_snapshots
+            list_workspace_snapshots,
+            get_changes_manager_state,
+            scan_agent_changes,
+            push_unified_sandbox,
+            discard_changes,
+            resolve_file_conflict
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

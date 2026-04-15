@@ -42,8 +42,7 @@ fn workspace_mode_from_metadata(metadata: Option<&str>) -> WorkspaceMode {
 fn workspace_repo_url_from_metadata(metadata: Option<&str>) -> Option<String> {
     metadata
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|value| value.get("repoUrl").and_then(|repo_url| repo_url.as_str()))
-        .map(str::to_string)
+        .and_then(|value| value.get("repoUrl").and_then(|repo_url| repo_url.as_str()).map(str::to_string))
         .filter(|value| !value.trim().is_empty())
 }
 

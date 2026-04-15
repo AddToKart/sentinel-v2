@@ -305,6 +305,53 @@ export interface CreateSessionInput {
   workspaceStrategy?: SessionWorkspaceStrategy
 }
 
+export interface AgentFileChange {
+  id: string
+  workspaceId: string
+  agentId: string
+  sandboxId: string
+  filePath: string
+  operation: 'created' | 'modified' | 'deleted' | 'renamed'
+  diffContent?: string
+  additions: number
+  deletions: number
+  timestamp: number
+  unifiedStatus: 'pending' | 'merged' | 'conflicted' | 'pushed' | 'discarded'
+  fileSize?: number
+  isBinary: boolean
+}
+
+export interface UnifiedSandboxEntry {
+  id: string
+  workspaceId: string
+  filePath: string
+  sourceAgentId: string
+  conflictAgentIds?: string[]
+  status: 'clean' | 'conflicted' | 'pushed'
+  lastUpdatedAt: number
+}
+
+export interface ChangesManagerState {
+  agentChanges: AgentFileChange[]
+  unifiedEntries: UnifiedSandboxEntry[]
+  totalChangedFiles: number
+  conflictCount: number
+  pendingPushCount: number
+}
+
+export interface ChangesUpdatedEvent {
+  workspaceId: string
+  agentId?: string
+  action?: string
+  changeCount?: number
+  paths?: string[]
+}
+
+export interface UnifiedSandboxUpdatedEvent {
+  workspaceId: string
+  entryCount: number
+}
+
 export interface SessionOutputEvent {
   sessionId: string
   data: string
@@ -359,6 +406,11 @@ export interface SentinelApi {
   createWorkspaceSnapshot: (workspaceId: string, name: string, description?: string) => Promise<SnapshotSummary>
   restoreWorkspaceSnapshot: (snapshotId: string) => Promise<WorkspaceContext>
   listWorkspaceSnapshots: (workspaceId: string) => Promise<SnapshotSummary[]>
+  getChangesManagerState: (workspaceId: string) => Promise<ChangesManagerState>
+  scanAgentChanges: (workspaceId: string, agentId: string) => Promise<void>
+  pushUnifiedSandbox: (workspaceId: string) => Promise<string[]>
+  discardChanges: (workspaceId: string, agentId?: string) => Promise<void>
+  resolveFileConflict: (workspaceId: string, filePath: string, winningAgentId: string) => Promise<void>
   onSessionOutput: (listener: (event: SessionOutputEvent) => void) => () => void
   onIdeTerminalOutput: (listener: (event: IdeTerminalOutputEvent) => void) => () => void
   onProjectState: (listener: (project: ProjectState) => void) => () => void
@@ -376,6 +428,8 @@ export interface SentinelApi {
   onTabOutput: (listener: (event: TabOutputEvent) => void) => () => void
   onTabState: (listener: (payload: TabStateUpdate) => void) => () => void
   onTabMetrics: (listener: (payload: TabMetricsUpdate) => void) => () => void
+  onChangesUpdated: (listener: (payload: ChangesUpdatedEvent) => void) => () => void
+  onUnifiedSandboxUpdated: (listener: (payload: UnifiedSandboxUpdatedEvent) => void) => () => void
 }
 
 declare global {

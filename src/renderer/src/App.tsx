@@ -4,6 +4,7 @@ import { BridgeUnavailableScreen } from './app/components/BridgeUnavailableScree
 import { ErrorToast } from './app/components/ErrorToast'
 import { WorkspaceModeDialog } from './app/components/WorkspaceModeDialog'
 import { useAppController } from './app/hooks/useAppController'
+import { ChangesManagerPanel } from './components/changes-manager/ChangesManagerPanel'
 import { ConsoleDrawer } from './components/ConsoleDrawer'
 import { GlobalActionBar } from './components/GlobalActionBar'
 
@@ -42,6 +43,7 @@ export default function App(): JSX.Element {
         onClose={controller.closeGlobalActionBar}
       />
       <WorkspaceModeDialog {...controller.workspaceModeDialogProps} />
+      <ChangesManagerPanel {...controller.changesManagerProps} />
     </div>
   )
 }
